@@ -7,8 +7,6 @@
 #include "db_client.h"
 #include "fair_db.h"
 
-// TODO(tgriggs): need to include a db.h
-
 using namespace std;
 using namespace moodycamel;
 
