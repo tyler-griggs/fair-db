@@ -1,10 +1,13 @@
 #include <chrono>
+#include <fstream>
 #include <iostream>
 #include <numeric>
 #include <pthread.h>
 #include <sched.h>
 #include <time.h>
 #include <vector>
+// #include <nlohmann/json.hpp>
+// using json = nlohmann::json;
 
 #include "db_client.h"
 #include "fair_db.h"
@@ -44,6 +47,7 @@ int main() {
   size_t read_size = 1e7; // Bytes per requst.  (cur ~= 10MB)
   size_t max_outstanding = 16;
   size_t num_runs = 1;
+  size_t num_clients = 2;
 
   for (int i = 0; i < num_runs; ++i) {
     std::vector<ReaderWriterQueue<DBRequest> *> queues;
@@ -64,28 +68,46 @@ int main() {
     auto db = FairDB(db_size, queues);
     db.Init();
 
-    // Run the DB
+    // Run the DB on various threads
     // auto results = db.Run();
 
-    RunStats stats = db.Run(num_reads);
-    for (const auto durs : stats.query_durations) {
+    RunStats stats = db.Run(num_reads * 2);
+    vector<vector<int>> per_client_durations;
+    per_client_durations.resize(num_clients);
+    for (const auto query : stats.query_stats) {
+      per_client_durations[query.queue_idx].push_back(query.duration);
+    }
+    for (const auto durs : per_client_durations) {
       int duration_avg =
           std::accumulate(durs.begin(), durs.end(), 0) / durs.size();
       cout << "Avg: " << duration_avg << " (dummy=" << stats.dummy << ")"
            << endl;
     }
-    // for (const auto o : stats.execution_order) {
-    //   cout << o << ", ";
-    // }
-    // cout << endl;
-    // for (const auto durs : stats.query_durations) {
-    //   cout << "Durs: ";
-    //   for (const auto d : durs) {
-    //     cout << d << ", ";
-    //   }
-    //   cout << endl;
-    // }
-    // cout << endl;
+
+    // TODO: json output
+    // json output_data;
+    // output_data["queries"] = stats.query_stats;
+
+    std::ofstream output_file("results.txt");
+    std::streambuf* cout_buffer = std::cout.rdbuf();
+    cout.rdbuf(output_file.rdbuf());
+
+    for (const auto query : stats.query_stats) {
+      cout << query.queue_idx << ", ";
+    }
+    cout << endl;
+    cout << endl;
+    for (const auto durs : per_client_durations) {
+      for (const auto d : durs) {
+        cout << d << ", ";
+      }
+      cout << endl;
+      cout << endl;
+    }
+    cout << endl;
+    std::cout.rdbuf(cout_buffer); // Restore cout's original buffer
+    output_file.close();
+    
 
     // Then Run the clients
     // for client in clients: client.Run()

@@ -13,11 +13,10 @@
 using namespace std;
 using namespace moodycamel;
 
+
 // TODOs:
 // bring up DB once, run multiple queries
-// create class for interacting with queue (+ metrics)
-// take flags as input (no more need for code copying)
-// thread pool
+// take flags as input
 // need better logic for handling empty queue?
 
 struct ClientQueue {
@@ -36,24 +35,26 @@ struct QueueState {
       : client_queues(client_queues) {}
 };
 
-// TODO: update stats to a histogram
+// TODO: histogram, nicer output format
+struct QueryStats {
+  int queue_idx;
+  long duration;
+};
+
 struct RunStats {
   vector<int> read_counts;
   int total_reads = 0;
 
-  vector<vector<int>> query_durations;
+  vector<QueryStats> query_stats;
+
+  // vector<vector<int>> query_durations;
   long dummy = 0;
 
-  vector<int> execution_order;
+  // vector<int> execution_order;
 
   RunStats(size_t num_clients, size_t num_reads) {
     read_counts = std::vector<int>(num_clients, 0);
-    execution_order = std::vector<int>(num_reads, -1);
-    query_durations.resize(num_clients);
-    for (int i = 0; i < num_clients; ++i) {
-      // query_durations[i].resize(num_reads / num_clients);
-      query_durations[i].resize(num_reads);
-    }
+    query_stats.resize(num_reads);
   }
 };
 
@@ -104,9 +105,13 @@ public:
       auto stop = std::chrono::high_resolution_clock::now();
       auto duration =
           std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-      stats.query_durations[queue_idx][stats.read_counts[queue_idx]] =
-          duration.count();
-      stats.execution_order[stats.total_reads] = queue_idx;
+
+      stats.query_stats[stats.total_reads] =
+          QueryStats{.queue_idx = queue_idx, .duration = duration.count()};
+
+      // stats.query_durations[queue_idx][stats.read_counts[queue_idx]] =
+      //     duration.count();
+      // stats.execution_order[stats.total_reads] = queue_idx;
       ++stats.read_counts[queue_idx];
       ++stats.total_reads;
       PushResultsToQueues(queue_idx, duration.count());
@@ -145,8 +150,8 @@ private:
   int PullRequestFromQueues(DBRequest &request) {
     // TODO: locking for multi-threads.
 
-    queue_state_.cur_queue_idx = MinimumServiceScheduling();
-    // queue_state_.cur_queue_idx = RoundRobinScheduling();
+    // queue_state_.cur_queue_idx = MinimumServiceScheduling();
+    queue_state_.cur_queue_idx = RoundRobinScheduling();
 
     while (!queue_state_.client_queues[queue_state_.cur_queue_idx]
                 .queue->try_dequeue(request)) {
