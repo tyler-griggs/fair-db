@@ -21,17 +21,17 @@ using namespace moodycamel;
 // need better logic for handling empty queue?
 
 struct ClientQueue {
-  ReaderWriterQueue<DBRequest> * queue;
-  int service_us = 0;  // Service in microseconds given to this queue
+  ReaderWriterQueue<DBRequest> *queue;
+  int service_us = 0; // Service in microseconds given to this queue
 
-  ClientQueue(ReaderWriterQueue<DBRequest> * queue) : queue(queue) {}
+  ClientQueue(ReaderWriterQueue<DBRequest> *queue) : queue(queue) {}
 };
 
 struct QueueState {
   vector<ClientQueue> client_queues;
   int cur_queue_idx = -1;
 
-  QueueState() {};
+  QueueState(){};
   QueueState(vector<ClientQueue> client_queues)
       : client_queues(client_queues) {}
 };
@@ -44,11 +44,15 @@ struct RunStats {
   vector<vector<int>> query_durations;
   long dummy = 0;
 
+  vector<int> execution_order;
+
   RunStats(size_t num_clients, size_t num_reads) {
     read_counts = std::vector<int>(num_clients, 0);
+    execution_order = std::vector<int>(num_reads, -1);
     query_durations.resize(num_clients);
     for (int i = 0; i < num_clients; ++i) {
-      query_durations[i].resize(num_reads / num_clients);
+      // query_durations[i].resize(num_reads / num_clients);
+      query_durations[i].resize(num_reads);
     }
   }
 };
@@ -102,6 +106,7 @@ public:
           std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
       stats.query_durations[queue_idx][stats.read_counts[queue_idx]] =
           duration.count();
+      stats.execution_order[stats.total_reads] = queue_idx;
       ++stats.read_counts[queue_idx];
       ++stats.total_reads;
       PushResultsToQueues(queue_idx, duration.count());
@@ -121,7 +126,7 @@ private:
     int min_service = std::numeric_limits<int>::max();
     int min_idx;
     for (int i = 0; i < queue_state_.client_queues.size(); ++i) {
-      const auto& q = queue_state_.client_queues[i];
+      const auto &q = queue_state_.client_queues[i];
       if (q.service_us < min_service) {
         min_service = q.service_us;
         min_idx = i;
@@ -134,17 +139,17 @@ private:
     return (queue_state_.cur_queue_idx + 1) % queue_state_.client_queues.size();
   }
 
-  // TODO: DWRR - give each queue some quantum each round. 
+  // TODO: DWRR - give each queue some quantum each round.
   // int DeficitWeightedRoundRobin(DBRequest &request) {}
 
   int PullRequestFromQueues(DBRequest &request) {
     // TODO: locking for multi-threads.
-    
+
     queue_state_.cur_queue_idx = MinimumServiceScheduling();
     // queue_state_.cur_queue_idx = RoundRobinScheduling();
 
-    while (!queue_state_.client_queues[queue_state_.cur_queue_idx].queue->try_dequeue(
-        request)) {
+    while (!queue_state_.client_queues[queue_state_.cur_queue_idx]
+                .queue->try_dequeue(request)) {
       // std::this_thread::sleep_for(std::chrono::microseconds(10));
     }
     return queue_state_.cur_queue_idx;

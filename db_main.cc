@@ -40,9 +40,9 @@ int main() {
   size_t db_size = 1e9; // Number of integers in the db (cur ~= 4GB)
   size_t datatype_size = sizeof(int);
 
-  size_t num_reads = 10; // Number of requests per client
-  size_t read_size = 1e7;  // Bytes per requst.  (cur ~= 10MB)
-  size_t max_outstanding = 10;
+  size_t num_reads = 100; // Number of requests per client
+  size_t read_size = 1e7; // Bytes per requst.  (cur ~= 10MB)
+  size_t max_outstanding = 16;
   size_t num_runs = 1;
 
   for (int i = 0; i < num_runs; ++i) {
@@ -74,7 +74,18 @@ int main() {
       cout << "Avg: " << duration_avg << " (dummy=" << stats.dummy << ")"
            << endl;
     }
-    cout << endl;
+    // for (const auto o : stats.execution_order) {
+    //   cout << o << ", ";
+    // }
+    // cout << endl;
+    // for (const auto durs : stats.query_durations) {
+    //   cout << "Durs: ";
+    //   for (const auto d : durs) {
+    //     cout << d << ", ";
+    //   }
+    //   cout << endl;
+    // }
+    // cout << endl;
 
     // Then Run the clients
     // for client in clients: client.Run()
