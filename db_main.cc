@@ -37,10 +37,10 @@ void SetCurrentAffinity(int core_id) {
 
 int main() {
   srand(time(0));
-  size_t db_size = 4e9; // Number of integers in the db (cur ~= 16GB)
+  size_t db_size = 1e9; // Number of integers in the db (cur ~= 4GB)
   size_t datatype_size = sizeof(int);
 
-  size_t num_reads = 1000; // Number of requests per client
+  size_t num_reads = 10; // Number of requests per client
   size_t read_size = 1e7;  // Bytes per requst.  (cur ~= 10MB)
   size_t max_outstanding = 10;
   size_t num_runs = 1;
@@ -66,7 +66,8 @@ int main() {
 
     // Run the DB
     // auto results = db.Run();
-    RunStats stats = db.Run(num_reads * 2);
+
+    RunStats stats = db.Run(num_reads);
     for (const auto durs : stats.query_durations) {
       int duration_avg =
           std::accumulate(durs.begin(), durs.end(), 0) / durs.size();

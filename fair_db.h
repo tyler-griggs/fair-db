@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <time.h>
 #include <vector>
@@ -19,11 +20,19 @@ using namespace moodycamel;
 // thread pool
 // need better logic for handling empty queue?
 
+struct ClientQueue {
+  ReaderWriterQueue<DBRequest> * queue;
+  int service_us = 0;  // Service in microseconds given to this queue
+
+  ClientQueue(ReaderWriterQueue<DBRequest> * queue) : queue(queue) {}
+};
+
 struct QueueState {
-  vector<ReaderWriterQueue<DBRequest> *> client_queues;
+  vector<ClientQueue> client_queues;
   int cur_queue_idx = -1;
 
-  QueueState(vector<ReaderWriterQueue<DBRequest> *> client_queues)
+  QueueState() {};
+  QueueState(vector<ClientQueue> client_queues)
       : client_queues(client_queues) {}
 };
 
@@ -48,8 +57,11 @@ class FairDB {
 public:
   FairDB(size_t db_size_elements,
          vector<ReaderWriterQueue<DBRequest> *> client_queues)
-      : db_size_elements_(db_size_elements),
-        queue_state_(QueueState(client_queues)) {}
+      : db_size_elements_(db_size_elements) {
+    for (const auto q : client_queues) {
+      queue_state_.client_queues.push_back(ClientQueue(q));
+    }
+  }
   void Init() {
     cout << "Initializing db of size: "
          << db_size_elements_ * datatype_size_ / 1e9 << "GB" << endl;
@@ -60,12 +72,13 @@ public:
     cout << "Initialization complete." << endl;
   }
 
-  RunStats Run(size_t num_reads) {
+  // TODO: remove expected reads. Eventually an actual server.
+  RunStats Run(size_t expected_reads) {
     size_t num_clients = queue_state_.client_queues.size();
-    auto stats = RunStats(num_clients, num_reads);
+    auto stats = RunStats(num_clients, expected_reads);
 
     DBRequest req(-1, {});
-    while (stats.total_reads < num_reads) {
+    while (stats.total_reads < expected_reads) {
       // TODO: error handling
       int queue_idx = PullRequestFromQueues(req);
 
@@ -91,6 +104,7 @@ public:
           duration.count();
       ++stats.read_counts[queue_idx];
       ++stats.total_reads;
+      PushResultsToQueues(queue_idx, duration.count());
     }
     return stats;
   }
@@ -102,15 +116,42 @@ private:
   vector<int> db_;
   QueueState queue_state_;
 
+  // TODO: this is where we can implement fair scheduling logic
+  int MinimumServiceScheduling() {
+    int min_service = std::numeric_limits<int>::max();
+    int min_idx;
+    for (int i = 0; i < queue_state_.client_queues.size(); ++i) {
+      const auto& q = queue_state_.client_queues[i];
+      if (q.service_us < min_service) {
+        min_service = q.service_us;
+        min_idx = i;
+      }
+    }
+    return min_idx;
+  }
+
+  int RoundRobinScheduling() {
+    return (queue_state_.cur_queue_idx + 1) % queue_state_.client_queues.size();
+  }
+
+  // TODO: DWRR - give each queue some quantum each round. 
+  // int DeficitWeightedRoundRobin(DBRequest &request) {}
+
   int PullRequestFromQueues(DBRequest &request) {
     // TODO: locking for multi-threads.
-    queue_state_.cur_queue_idx =
-        (queue_state_.cur_queue_idx + 1) % queue_state_.client_queues.size();
-    while (!queue_state_.client_queues[queue_state_.cur_queue_idx]->try_dequeue(
+    
+    queue_state_.cur_queue_idx = MinimumServiceScheduling();
+    // queue_state_.cur_queue_idx = RoundRobinScheduling();
+
+    while (!queue_state_.client_queues[queue_state_.cur_queue_idx].queue->try_dequeue(
         request)) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      // std::this_thread::sleep_for(std::chrono::microseconds(10));
     }
     return queue_state_.cur_queue_idx;
+  }
+
+  void PushResultsToQueues(int queue_idx, int service_duration_us) {
+    queue_state_.client_queues[queue_idx].service_us += service_duration_us;
   }
 };
 
