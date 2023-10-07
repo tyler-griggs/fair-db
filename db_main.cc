@@ -1,6 +1,7 @@
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <numeric>
 #include <pthread.h>
 #include <sched.h>
@@ -10,6 +11,7 @@
 // using json = nlohmann::json;
 
 #include "db_client.h"
+#include "db_worker.h"
 #include "fair_db.h"
 
 using namespace std;
@@ -43,7 +45,7 @@ int main() {
   size_t db_size = 1e9; // Number of integers in the db (cur ~= 4GB)
   size_t datatype_size = sizeof(int);
 
-  size_t num_reads = 100; // Number of requests per client
+  size_t num_reads = 5000; // Number of requests per client
   size_t read_size = 1e7; // Bytes per requst.  (cur ~= 10MB)
   size_t max_outstanding = 16;
   size_t num_runs = 1;
@@ -64,53 +66,74 @@ int main() {
     std::thread client_thread2 = client2.RunRandom();
     SetThreadAffinity(client_thread2, 1);
 
-    SetCurrentAffinity(2);
-    auto db = FairDB(db_size, queues);
+    auto db = FairDB(db_size);
     db.Init();
 
-    // Run the DB on various threads
-    // auto results = db.Run();
+    auto database = db.database();
+    int worker_reads = num_reads/4;
 
-    RunStats stats = db.Run(num_reads * 2);
-    vector<vector<int>> per_client_durations;
-    per_client_durations.resize(num_clients);
-    for (const auto query : stats.query_stats) {
-      per_client_durations[query.queue_idx].push_back(query.duration);
-    }
-    for (const auto durs : per_client_durations) {
-      int duration_avg =
-          std::accumulate(durs.begin(), durs.end(), 0) / durs.size();
-      cout << "Avg: " << duration_avg << " (dummy=" << stats.dummy << ")"
-           << endl;
-    }
+    // TODO: simplify multi-workers
+    std::mutex queue_mutex;
+
+    std::thread worker_thread1([database, queues, &queue_mutex, worker_reads] {
+      DBWorker(database, queues, &queue_mutex).Run(worker_reads);
+    });
+    SetThreadAffinity(worker_thread1, 3);
+
+    std::thread worker_thread2([database, queues, &queue_mutex, worker_reads] {
+      DBWorker(database, queues, &queue_mutex).Run(worker_reads);
+    });
+    SetThreadAffinity(worker_thread2, 4);
+
+
+    worker_thread1.join();
+    worker_thread2.join();
+
+
+
+
+    // RunStats stats = worker.Run(num_reads * 2);
+    // vector<vector<int>> per_client_durations;
+    // per_client_durations.resize(num_clients);
+    // for (const auto query : stats.query_stats) {
+    //   per_client_durations[query.queue_idx].push_back(query.duration);
+    // }
+    // for (const auto durs : per_client_durations) {
+    //   int duration_avg =
+    //       std::accumulate(durs.begin(), durs.end(), 0) / durs.size();
+    //   cout << "Avg: " << duration_avg << " (dummy=" << stats.dummy << ")"
+    //        << endl;
+    // }
 
     // TODO: json output
     // json output_data;
     // output_data["queries"] = stats.query_stats;
 
-    std::ofstream output_file("results.txt");
-    std::streambuf* cout_buffer = std::cout.rdbuf();
-    cout.rdbuf(output_file.rdbuf());
+    // std::ofstream output_file("results.txt");
+    // std::streambuf* cout_buffer = std::cout.rdbuf();
+    // cout.rdbuf(output_file.rdbuf());
 
-    for (const auto query : stats.query_stats) {
-      cout << query.queue_idx << ", ";
-    }
-    cout << endl;
-    cout << endl;
-    for (const auto durs : per_client_durations) {
-      for (const auto d : durs) {
-        cout << d << ", ";
-      }
-      cout << endl;
-      cout << endl;
-    }
-    cout << endl;
-    std::cout.rdbuf(cout_buffer); // Restore cout's original buffer
-    output_file.close();
+    // for (const auto query : stats.query_stats) {
+    //   cout << query.queue_idx << ", ";
+    // }
+    // cout << endl;
+    // cout << endl;
+    // for (const auto durs : per_client_durations) {
+    //   for (const auto d : durs) {
+    //     cout << d << ", ";
+    //   }
+    //   cout << endl;
+    //   cout << endl;
+    // }
+    // cout << endl;
+    // std::cout.rdbuf(cout_buffer); // Restore cout's original buffer
+    // output_file.close();
     
 
     // Then Run the clients
     // for client in clients: client.Run()
+
+    // TODO: send message to clients to stop sending requests
 
     client_thread1.join();
     client_thread2.join();
