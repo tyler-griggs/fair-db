@@ -78,7 +78,7 @@ public:
     }
   }
 
-  void Run(size_t num_queries) {
+  void Run(int worker_id, size_t num_queries) {
     size_t num_clients = queue_state_.client_queues.size();
     auto stats = RunStats(num_clients, num_queries);
 
@@ -96,6 +96,22 @@ public:
         for (int j = 0; j < read.read_size; ++j) {
           stats.dummy += (*db_)[read.start_idx + j] % 2;
         }
+
+        if (read.compute_duration > 0) {
+          auto compute_start = std::chrono::steady_clock::now();
+          auto timeout = std::chrono::milliseconds(read.compute_duration);
+          volatile int vol_dummy = 0;
+          while (std::chrono::steady_clock::now() - compute_start < timeout) {
+            for (int i = 0; i < 500000; ++i) {
+              vol_dummy += i;
+            }
+            for (int i = 0; i < 500000; ++i) {
+              vol_dummy -= i;
+            }
+          }
+          stats.dummy += vol_dummy;
+        }
+
         auto ministop = std::chrono::high_resolution_clock::now();
         auto miniduration =
             std::chrono::duration_cast<std::chrono::microseconds>(ministop -
@@ -116,7 +132,7 @@ public:
       ++stats.total_reads;
       PushResultsToQueues(queue_idx, duration.count());
     }
-    DumpStats(stats, num_clients);
+    DumpStats(stats, worker_id, num_clients);
   }
 
 private:
@@ -129,7 +145,6 @@ private:
   int MinimumServiceScheduling() {
     int min_service = std::numeric_limits<int>::max();
     int min_idx;
-    std::lock_guard<std::mutex> lock(*queue_mutex_);
     for (int i = 0; i < queue_state_.client_queues.size(); ++i) {
       const auto &q = queue_state_.client_queues[i];
       if (q.service_us < min_service) {
@@ -151,8 +166,8 @@ private:
     // TODO: locking for multi-threads.
     std::lock_guard<std::mutex> lock(*queue_mutex_);
 
-    // queue_state_.cur_queue_idx = MinimumServiceScheduling();
-    queue_state_.cur_queue_idx = RoundRobinScheduling();
+    queue_state_.cur_queue_idx = MinimumServiceScheduling();
+    // queue_state_.cur_queue_idx = RoundRobinScheduling();
 
     while (!queue_state_.client_queues[queue_state_.cur_queue_idx]
                 .queue->try_dequeue(request)) {
@@ -165,7 +180,7 @@ private:
     queue_state_.client_queues[queue_idx].service_us += service_duration_us;
   }
 
-  void DumpStats(RunStats &stats, int num_clients) {
+  void DumpStats(RunStats &stats, int worker_id, int num_clients) {
     vector<vector<int>> per_client_durations;
     per_client_durations.resize(num_clients);
     for (const auto query : stats.query_stats) {
@@ -178,6 +193,26 @@ private:
       cout << "Avg: " << i << " - " << duration_avg << " (dummy=" << stats.dummy
            << ")" << endl;
     }
+
+    std::ofstream output_file("results_" + std::to_string(worker_id) + ".txt");
+    std::streambuf* cout_buffer = std::cout.rdbuf();
+    cout.rdbuf(output_file.rdbuf());
+
+    for (const auto query : stats.query_stats) {
+      cout << query.queue_idx << ", ";
+    }
+    cout << endl;
+    cout << endl;
+    for (const auto durs : per_client_durations) {
+      for (const auto d : durs) {
+        cout << d << ", ";
+      }
+      cout << endl;
+      cout << endl;
+    }
+    cout << endl;
+    std::cout.rdbuf(cout_buffer); // Restore cout's original buffer
+    output_file.close();
   }
 };
 

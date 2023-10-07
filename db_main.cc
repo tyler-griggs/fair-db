@@ -20,12 +20,15 @@ using namespace moodycamel;
 
 int main() {
   srand(time(0));
-  size_t db_size = 1e9; // Number of integers in the db (cur ~= 4GB)
+  size_t db_size = 4e9; // Number of integers in the db (cur ~= 16GB)
   size_t datatype_size = sizeof(int);
 
-  size_t num_queries = 100;           // Number of requests until DB shuts down.
+  size_t num_queries = 1000;           // Number of requests until DB shuts down.
   size_t client_timeout_seconds = 10; // Duration until clients shut down.
-  size_t read_size = 1e7;             // Bytes per requst.  (cur ~= 10MB)
+  size_t client1_read_size = 1e7;             // Bytes per request.  (cur ~= 10MB)
+  size_t client2_read_size = 1e9;             // Bytes per request.  (cur ~= 1GB)
+  size_t num_worker_threads = 2;
+  
   size_t max_outstanding = 16;
   size_t num_runs = 1;
   size_t num_clients = 2;
@@ -35,21 +38,22 @@ int main() {
 
     ReaderWriterQueue<DBRequest> q1(max_outstanding);
     queues.push_back(&q1);
-    DBClient client1(1, &q1, db_size, read_size / datatype_size,
-                     client_timeout_seconds);
+    DBClient client1(1, &q1, db_size, client1_read_size / datatype_size,
+                     client_timeout_seconds, /*compute_duration_ms=*/0);
     std::thread client_thread1 = client1.RunSequential();
     SetThreadAffinity(client_thread1, 0);
 
     ReaderWriterQueue<DBRequest> q2(max_outstanding);
     queues.push_back(&q2);
-    DBClient client2(2, &q2, db_size, read_size / datatype_size,
-                     client_timeout_seconds);
-    std::thread client_thread2 = client2.RunRandom();
-    SetThreadAffinity(client_thread2, 1);
+    DBClient client2(2, &q2, db_size, client2_read_size / datatype_size,
+                     client_timeout_seconds, /*compute_duration_ms=*/0);
+    std::thread client_thread2 = client2.RunSequential();
+    // std::thread client_thread2 = client2.RunRandom();
+    SetThreadAffinity(client_thread2, 0);
 
     auto db = FairDB(db_size);
     db.Init();
-    db.Run(queues, 2, num_queries);
+    db.Run(queues, num_worker_threads, num_queries);
 
     // RunStats stats = worker.Run(num_reads * 2);
     // vector<vector<int>> per_client_durations;

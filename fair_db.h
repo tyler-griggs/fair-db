@@ -30,10 +30,10 @@ public:
     const vector<int> *db = database();
     for (int i = 0; i < num_threads; ++i) {
       worker_threads.push_back(
-          std::thread([db, client_queues, queue_mutex, worker_reads] {
-            DBWorker(db, client_queues, queue_mutex).Run(worker_reads);
+          std::thread([db, client_queues, queue_mutex, worker_reads, i] {
+            DBWorker(db, client_queues, queue_mutex).Run(i, worker_reads);
           }));
-      // TODO: cleaner way to do this (ie, remove constant 3)
+      // TODO: cleaner way to do this (ie, remove constant)
       SetThreadAffinity(worker_threads[i], 2 + i);
     }
 
