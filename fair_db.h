@@ -4,11 +4,13 @@
 #include <iostream>
 #include <vector>
 
+#include "db_worker.h"
+#include "utils.h"
+
 using namespace std;
 
 class FairDB {
 public:
-
   FairDB(size_t db_size_elements) : db_size_elements_(db_size_elements) {}
 
   void Init() {
@@ -21,16 +23,29 @@ public:
     cout << "Initialization complete." << endl;
   }
 
-  vector<int>* database() {
-    return &db_;
+  void Run(std::vector<ReaderWriterQueue<DBRequest> *> client_queues,
+           size_t num_threads, int worker_reads) {
+    std::vector<std::thread> worker_threads;
+    std::shared_ptr<std::mutex> queue_mutex = std::make_shared<std::mutex>();
+    const vector<int> *db = database();
+    for (int i = 0; i < num_threads; ++i) {
+      worker_threads.push_back(
+          std::thread([db, client_queues, queue_mutex, worker_reads] {
+            DBWorker(db, client_queues, queue_mutex).Run(worker_reads);
+          }));
+      // TODO: cleaner way to do this (ie, remove constant 3)
+      SetThreadAffinity(worker_threads[i], 2 + i);
+    }
+
+    for (int i = 0; i < num_threads; ++i) {
+      worker_threads[i].join();
+    }
   }
 
-  size_t db_size_elements() {
-    return db_size_elements_;
-  }
-  size_t datatype_size() {
-    return datatype_size_;
-  }
+  vector<int> *database() { return &db_; }
+
+  size_t db_size_elements() { return db_size_elements_; }
+  size_t datatype_size() { return datatype_size_; }
 
 private:
   size_t db_size_elements_;

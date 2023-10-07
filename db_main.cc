@@ -11,42 +11,21 @@
 // using json = nlohmann::json;
 
 #include "db_client.h"
-#include "db_worker.h"
+// #include "db_worker.h"
 #include "fair_db.h"
+#include "utils.h"
 
 using namespace std;
 using namespace moodycamel;
-
-void SetThreadAffinity(std::thread &t, int core_id) {
-  cpu_set_t cpuset;
-  CPU_ZERO(&cpuset);         // Initialize the CPU set
-  CPU_SET(core_id, &cpuset); // Set the desired core
-
-  pthread_t native_thread_handle = t.native_handle();
-
-  if (pthread_setaffinity_np(native_thread_handle, sizeof(cpu_set_t),
-                             &cpuset) != 0) {
-    std::cerr << "Error setting thread CPU affinity." << std::endl;
-  }
-}
-
-void SetCurrentAffinity(int core_id) {
-  cpu_set_t cpuset;
-  CPU_ZERO(&cpuset);         // Initialize the CPU set
-  CPU_SET(core_id, &cpuset); // Set the desired core
-
-  if (pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0) {
-    std::cerr << "Error setting current CPU affinity." << std::endl;
-  }
-}
 
 int main() {
   srand(time(0));
   size_t db_size = 1e9; // Number of integers in the db (cur ~= 4GB)
   size_t datatype_size = sizeof(int);
 
-  size_t num_reads = 5000; // Number of requests per client
-  size_t read_size = 1e7; // Bytes per requst.  (cur ~= 10MB)
+  size_t num_queries = 100;           // Number of requests until DB shuts down.
+  size_t client_timeout_seconds = 10; // Duration until clients shut down.
+  size_t read_size = 1e7;             // Bytes per requst.  (cur ~= 10MB)
   size_t max_outstanding = 16;
   size_t num_runs = 1;
   size_t num_clients = 2;
@@ -56,41 +35,21 @@ int main() {
 
     ReaderWriterQueue<DBRequest> q1(max_outstanding);
     queues.push_back(&q1);
-    DBClient client1(1, &q1, db_size, read_size / datatype_size, num_reads);
+    DBClient client1(1, &q1, db_size, read_size / datatype_size,
+                     client_timeout_seconds);
     std::thread client_thread1 = client1.RunSequential();
     SetThreadAffinity(client_thread1, 0);
 
     ReaderWriterQueue<DBRequest> q2(max_outstanding);
     queues.push_back(&q2);
-    DBClient client2(2, &q2, db_size, read_size / datatype_size, num_reads);
+    DBClient client2(2, &q2, db_size, read_size / datatype_size,
+                     client_timeout_seconds);
     std::thread client_thread2 = client2.RunRandom();
     SetThreadAffinity(client_thread2, 1);
 
     auto db = FairDB(db_size);
     db.Init();
-
-    auto database = db.database();
-    int worker_reads = num_reads/4;
-
-    // TODO: simplify multi-workers
-    std::mutex queue_mutex;
-
-    std::thread worker_thread1([database, queues, &queue_mutex, worker_reads] {
-      DBWorker(database, queues, &queue_mutex).Run(worker_reads);
-    });
-    SetThreadAffinity(worker_thread1, 3);
-
-    std::thread worker_thread2([database, queues, &queue_mutex, worker_reads] {
-      DBWorker(database, queues, &queue_mutex).Run(worker_reads);
-    });
-    SetThreadAffinity(worker_thread2, 4);
-
-
-    worker_thread1.join();
-    worker_thread2.join();
-
-
-
+    db.Run(queues, 2, num_queries);
 
     // RunStats stats = worker.Run(num_reads * 2);
     // vector<vector<int>> per_client_durations;
@@ -128,7 +87,6 @@ int main() {
     // cout << endl;
     // std::cout.rdbuf(cout_buffer); // Restore cout's original buffer
     // output_file.close();
-    
 
     // Then Run the clients
     // for client in clients: client.Run()
