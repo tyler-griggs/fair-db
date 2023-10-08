@@ -34,7 +34,7 @@ public:
             DBWorker(db, client_queues, queue_mutex).Run(i, worker_reads);
           }));
       // TODO: cleaner way to do this (ie, remove constant)
-      SetThreadAffinity(worker_threads[i], 2 + i);
+      SetThreadAffinity(worker_threads[i], 1 + i);
     }
 
     for (int i = 0; i < num_threads; ++i) {
