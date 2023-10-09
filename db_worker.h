@@ -69,7 +69,7 @@ struct RunStats {
 
 class DBWorker {
 public:
-  DBWorker(const vector<int> *db,
+  DBWorker(const shared_ptr<FairDB> db,
            vector<ReaderWriterQueue<DBRequest> *> client_queues,
            std::shared_ptr<std::mutex> queue_mutex)
       : db_(db), queue_mutex_(queue_mutex) {
@@ -93,9 +93,11 @@ public:
         // cout << "read size: " << read.read_size << endl;
         // cout << "start: " << read.start_idx << endl;
         // cout << "end: " << read.start_idx + read.read_size << endl;
-        for (int j = 0; j < read.read_size; ++j) {
-          stats.dummy += (*db_)[read.start_idx + j] % 2;
-        }
+        db_->Read(stats.dummy, read.start_idx, read.read_size);
+        // for (int j = 0; j < read.read_size; ++j) {
+        //   stats.dummy += (*db_)[read.start_idx + j] % 2;
+        // }
+
 
         if (read.compute_duration > 0) {
           auto compute_start = std::chrono::steady_clock::now();
@@ -136,7 +138,8 @@ public:
   }
 
 private:
-  const vector<int> *db_;
+  const shared_ptr<FairDB> db_;
+  // const vector<int> *db_;
   QueueState queue_state_;
   std::shared_ptr<std::mutex> queue_mutex_;
 
@@ -193,25 +196,19 @@ private:
       cout << "Avg: " << i << " - " << duration_avg << " (dummy=" << stats.dummy
            << ")" << endl;
     }
-
-    std::ofstream output_file("results_" + std::to_string(worker_id) + ".txt");
-    std::streambuf* cout_buffer = std::cout.rdbuf();
-    cout.rdbuf(output_file.rdbuf());
-
+  
+    std::ofstream output_file("results/results_" + std::to_string(worker_id) + ".txt");
     for (const auto query : stats.query_stats) {
-      cout << query.queue_idx << ", ";
+      output_file << query.queue_idx << ", ";
     }
-    cout << endl;
-    cout << endl;
+    output_file << endl << endl;
     for (const auto durs : per_client_durations) {
       for (const auto d : durs) {
-        cout << d << ", ";
+        output_file << d << ", ";
       }
-      cout << endl;
-      cout << endl;
+      output_file << endl << endl;
     }
-    cout << endl;
-    std::cout.rdbuf(cout_buffer); // Restore cout's original buffer
+    output_file << endl;
     output_file.close();
   }
 };

@@ -12,7 +12,8 @@
 
 #include "db_client.h"
 // #include "db_worker.h"
-#include "fair_db.h"
+// #include "fair_db.h"
+#include "fair_db_manager.h"
 #include "utils.h"
 
 using namespace std;
@@ -24,12 +25,12 @@ int main() {
   size_t datatype_size = sizeof(int);
 
   size_t num_queries = 16;           // Number of requests per worker until DB shuts down.
-  // size_t client1_read_size = 1e7;             // Bytes per request.  (cur ~= 10MB)
-  size_t client1_read_size = 1e9;             // Bytes per request.  (cur ~= 1GB)
+  size_t client1_read_size = 1e7;             // Bytes per request.  (cur ~= 10MB)
+  // size_t client1_read_size = 1e9;             // Bytes per request.  (cur ~= 1GB)
   // size_t client2_read_size = 1e7;             // Bytes per request.  (cur ~= 10MB)
   size_t client2_read_size = 1e9;             // Bytes per request.  (cur ~= 1GB)
-  size_t num_worker_threads = 7;
-  size_t client_timeout_seconds = 20; // Duration until clients shut down.
+  size_t num_worker_threads = 3;
+  size_t client_timeout_seconds = 12; // Duration until clients shut down.
   
   size_t max_outstanding = 16;
   size_t num_runs = 1;
@@ -56,9 +57,9 @@ int main() {
     // SetThreadAffinity(client_threads[1], 0);
     // client_threads.push_back(client_thread2);
 
-    auto db = FairDB(db_size);
-    db.Init();
-    db.Run(queues, num_worker_threads, num_queries);
+    auto db_manager = FairDBManager(db_size);
+    db_manager.Init();
+    db_manager.Run(queues, num_worker_threads, num_queries);
 
     // RunStats stats = worker.Run(num_reads * 2);
     // vector<vector<int>> per_client_durations;
