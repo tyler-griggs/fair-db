@@ -98,7 +98,6 @@ public:
         //   stats.dummy += (*db_)[read.start_idx + j] % 2;
         // }
 
-
         if (read.compute_duration > 0) {
           auto compute_start = std::chrono::steady_clock::now();
           auto timeout = std::chrono::milliseconds(read.compute_duration);
@@ -196,8 +195,9 @@ private:
       cout << "Avg: " << i << " - " << duration_avg << " (dummy=" << stats.dummy
            << ")" << endl;
     }
-  
-    std::ofstream output_file("results/results_" + std::to_string(worker_id) + ".txt");
+
+    std::ofstream output_file("results/results_" + std::to_string(worker_id) +
+                              ".txt");
     for (const auto query : stats.query_stats) {
       output_file << query.queue_idx << ", ";
     }
