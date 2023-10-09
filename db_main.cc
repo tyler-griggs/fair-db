@@ -21,16 +21,16 @@ using namespace moodycamel;
 
 int main() {
   srand(time(0));
-  size_t db_size = 4e9; // Number of integers in the db (cur ~= 16GB)
+  size_t db_size = 40e9; // Number of integers in the db (cur ~= 160GB)
+  // size_t db_size = 4e9; // Number of integers in the db (cur ~= 16GB)
   size_t datatype_size = sizeof(int);
 
   size_t num_queries = 16;           // Number of requests per worker until DB shuts down.
-  size_t client1_read_size = 1e7;             // Bytes per request.  (cur ~= 10MB)
-  // size_t client1_read_size = 1e9;             // Bytes per request.  (cur ~= 1GB)
+  size_t client1_read_size = 8e9;             // Bytes per request.  (cur ~= 8GB)
   // size_t client2_read_size = 1e7;             // Bytes per request.  (cur ~= 10MB)
   size_t client2_read_size = 1e9;             // Bytes per request.  (cur ~= 1GB)
-  size_t num_worker_threads = 3;
-  size_t client_timeout_seconds = 12; // Duration until clients shut down.
+  size_t num_worker_threads = 1;
+  size_t client_timeout_seconds = 120; // Duration until clients shut down.
   
   size_t max_outstanding = 16;
   size_t num_runs = 1;

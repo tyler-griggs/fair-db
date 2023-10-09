@@ -10,8 +10,8 @@
 class FairDBManager {
 public:
   FairDBManager(size_t db_size_elements) : db_size_elements_(db_size_elements) {
-    database_ = std::make_shared<InMemoryFairDB>();
-    // database_ = std::make_shared<DiskFairDB>();
+    // database_ = std::make_shared<InMemoryFairDB>();
+    database_ = std::make_shared<DiskFairDB>();
   }
 
   void Init() {
