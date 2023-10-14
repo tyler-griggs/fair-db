@@ -52,7 +52,7 @@ private:
 class DiskFairDB : public FairDB {
 public:
   void Init(size_t db_size_elements) override {
-    const std::string filepath("/mnt/disks/fairdb/db.bin");
+    const std::string filepath("/mnt/disks/fair_db/db.bin");
     read_file_ = std::ifstream(filepath, std::ios::binary);
     if (!read_file_.is_open()) {
       std::cerr << "Error opening file for reading: " << filepath << std::endl;

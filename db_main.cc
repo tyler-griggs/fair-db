@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "db_client.h"
-#include "fair_db_manager.h"
+#include "db_manager.h"
 #include "utils.h"
 
 using namespace std;

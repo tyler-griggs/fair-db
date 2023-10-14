@@ -1,5 +1,5 @@
-#ifndef FAIR_DB_MANAGER_H
-#define FAIR_DB_MANAGER_H
+#ifndef DB_MANAGER_H
+#define DB_MANAGER_H
 
 #include <iostream>
 #include <vector>
