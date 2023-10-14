@@ -16,8 +16,10 @@ public:
 
   void Init() { database_->Init(db_size_elements_); }
 
-  void Run(std::vector<ReaderWriterQueue<DBRequest> *> client_queues,
-           size_t num_threads, int worker_reads) {
+  void Run(const std::vector<std::shared_ptr<ReaderWriterQueue<DBRequest>>>& client_queues,
+           size_t num_threads, 
+           const std::vector<int>& worker_cores, 
+           int worker_queries) {
     std::vector<std::thread> worker_threads;
     std::shared_ptr<std::mutex> queue_mutex = std::make_shared<std::mutex>();
 
@@ -28,11 +30,10 @@ public:
 
     for (int i = 0; i < num_threads; ++i) {
       worker_threads.push_back(
-          std::thread([this, queue_state, queue_mutex, worker_reads, i] {
-            DBWorker(database_, queue_state, queue_mutex).Run(i, worker_reads);
+          std::thread([this, queue_state, queue_mutex, worker_queries, i] {
+            DBWorker(database_, queue_state, queue_mutex).Run(i, worker_queries);
           }));
-      // TODO: cleaner way to do this (ie, remove constant)
-      SetThreadAffinity(worker_threads[i], 1 + i);
+      SetThreadAffinity(worker_threads[i], worker_cores[i]);
     }
 
     for (int i = 0; i < num_threads; ++i) {
@@ -43,7 +44,7 @@ public:
   size_t db_size_elements() { return db_size_elements_; }
 
 private:
-  size_t db_size_elements_;
+  const size_t db_size_elements_;
   std::shared_ptr<FairDB> database_;
 };
 

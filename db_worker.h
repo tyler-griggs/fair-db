@@ -17,22 +17,16 @@
 using namespace std;
 using namespace moodycamel;
 
-// TODO: thread pool
-// Start with DB threads locking access to queues
-// Profile the performance - is lock contention a problem?
-// Then work on lock-free version
-
 // TODOs:
-// clean up pointer usage: unique_ptr, const, etc.
 // bring up DB once, run multiple queries
 // take flags as input
 // need better logic for handling empty queue?
 
 struct ClientQueue {
-  ReaderWriterQueue<DBRequest> *queue;
+  const std::shared_ptr<ReaderWriterQueue<DBRequest>>& queue;
   int service_us = 0; // Service in microseconds given to this queue
 
-  ClientQueue(ReaderWriterQueue<DBRequest> *queue) : queue(queue) {}
+  ClientQueue(const std::shared_ptr<ReaderWriterQueue<DBRequest>>& queue) : queue(queue) {}
 };
 
 // TODO: clean constructor up

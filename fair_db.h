@@ -6,7 +6,9 @@
 #include <vector>
 
 using namespace std;
-const std::size_t CHUNK_SIZE = 4e9; // 4B ints, 16GB
+
+// Size of chunk to read into memory at once
+const std::size_t CHUNK_SIZE = 2e9; // 4B ints, 8GB
 
 class FairDB {
 public:
@@ -19,8 +21,6 @@ public:
 // In-memory database
 class InMemoryFairDB : public FairDB {
 public:
-  // InMemoryFairDB(size_t db_size_elements) :
-  // db_size_elements_(db_size_elements) {}
   void Init(size_t db_size_elements) override {
     db_ = std::make_unique<vector<int>>();
     cout << "Initializing in-memory db of size: "
@@ -33,7 +33,6 @@ public:
   }
 
   void Read(long &dummy, size_t start, size_t len) override {
-    // db_->Read(stats.dummy, read.start_idx, read.read_size);
     for (int j = 0; j < len; ++j) {
       dummy += (*db_)[start + j] % 2;
     }
@@ -44,7 +43,6 @@ public:
   //   return;
   // }
 private:
-  // TODO: unique_ptr
   std::unique_ptr<vector<int>> db_;
 };
 
@@ -66,11 +64,8 @@ public:
 
     for (size_t i = 0; i < len; i += CHUNK_SIZE) {
       std::size_t currentChunkSize = std::min(CHUNK_SIZE, len - i * CHUNK_SIZE);
-      // cout << "i=" << i << ", curChunkSize=" << currentChunkSize << ",
-      // bufferSize=" << read_buffer_.size() <<  endl;
       read_file_.read(reinterpret_cast<char *>(&read_buffer_[0]),
                       currentChunkSize * sizeof(int));
-      // cout << "read complete" << endl;
       for (size_t j = 0; j < currentChunkSize; ++j) {
         dummy += read_buffer_[j] % 2;
       }

@@ -14,7 +14,8 @@ using namespace std;
 
 // TODO: Add internal metric state
 
-// TODO: create client arguments to modify request size, type, frequency, etc.
+// A single read request for the database to serve.
+// TODO: Allow clients to make more flexible queries.
 struct SingleRead {
   size_t start_idx;
   size_t read_size;
@@ -25,6 +26,7 @@ struct SingleRead {
         compute_duration(compute_duration) {}
 };
 
+// A set of read requests for the database to serve.
 struct DBRequest {
   int client_id;
   std::vector<SingleRead> reads;
@@ -35,23 +37,25 @@ struct DBRequest {
 
 class DBClient {
 public:
-  DBClient(const int client_id, ReaderWriterQueue<DBRequest> *request_queue,
-           const size_t db_size_elements, const size_t read_size,
-           const size_t compute_duration_ms)
+  DBClient(int client_id, 
+           const std::shared_ptr<ReaderWriterQueue<DBRequest>>& request_queue,
+           size_t db_size_elements, 
+           size_t read_size,
+           size_t compute_duration_ms)
       : client_id_(client_id), request_queue_(request_queue),
         db_size_elements_(db_size_elements), read_size_(read_size),
         compute_duration_ms_(compute_duration_ms) {}
 
+  // Run the sequential read workload.
   std::thread RunSequential(std::atomic<bool>& stop) {
     srand(time(0));
-    cout << "Client ID " << client_id_ << " running Sequential of "
+    cout << "Client ID " << client_id_ << " running Sequential workload of "
          << read_size_ / 1e6 << "M elements." << endl;
     std::thread client_thread([this, &stop] {
 
       while (!stop.load()) {
         int start_idx = rand() % (db_size_elements_ - read_size_);
-        std::vector<SingleRead> req(
-            1, SingleRead(start_idx, read_size_, compute_duration_ms_));
+        std::vector<SingleRead> req{SingleRead(start_idx, read_size_, compute_duration_ms_)};
 
         while (!request_queue_->try_enqueue(DBRequest(client_id_, req)) && !stop.load()) {
           std::this_thread::sleep_for(std::chrono::microseconds(10));
@@ -62,13 +66,12 @@ public:
     return client_thread;
   }
 
-  std::thread RunRandom(std::atomic<bool>& stop) {
+  // Run the random read workload.
+  std::thread RunRandom(std::atomic<bool>& stop, int num_random) {
     srand(time(0));
-    cout << "Client ID " << client_id_ << " running Random of "
+    cout << "Client ID " << client_id_ << " running Random workload  of "
          << read_size_ / 1e6 << "M elements." << endl;
-    std::thread client_thread([this, &stop] {
-      size_t num_random = 1024;
-
+    std::thread client_thread([this, &stop, num_random] {
       while (!stop.load()) {
         std::vector<SingleRead> reqs;
         for (int i = 0; i < num_random; ++i) {
@@ -88,7 +91,7 @@ public:
 
 private:
   const int client_id_;
-  ReaderWriterQueue<DBRequest> *request_queue_;
+  const std::shared_ptr<ReaderWriterQueue<DBRequest>>& request_queue_;
   const size_t db_size_elements_;
   const size_t read_size_;
   const size_t compute_duration_ms_;
