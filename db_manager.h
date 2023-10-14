@@ -24,7 +24,7 @@ public:
     for (int i = 0; i < num_threads; ++i) {
       worker_threads.push_back(std::thread([this, queue_state, queue_mutex,
                                             worker_queries, i] {
-        DBWorker(database_, queue_state, queue_mutex).Run(i, worker_queries);
+        DBWorker(/*worker_id=*/i, database_, queue_state, queue_mutex).Run(worker_queries);
       }));
       SetThreadAffinity(worker_threads[i], worker_cores[i]);
     }

@@ -17,9 +17,6 @@
 using namespace std;
 using namespace moodycamel;
 
-// TODOs:
-// take flags as input
-// need better logic for handling empty queue?
 
 struct ClientQueueState {
   const std::shared_ptr<ReaderWriterQueue<DBRequest>> &queue;
@@ -60,18 +57,18 @@ struct RunStats {
 
 class DBWorker {
 public:
-  DBWorker(const shared_ptr<FairDB> db,
+  DBWorker(int worker_id,
+           const shared_ptr<FairDB> db,
            std::shared_ptr<AllQueueState> queue_state,
            std::shared_ptr<std::mutex> queue_mutex)
-      : db_(db), queue_state_(queue_state), queue_mutex_(queue_mutex) {}
+      : worker_id_(worker_id), db_(db), queue_state_(queue_state), queue_mutex_(queue_mutex) {}
 
-  void Run(int worker_id, size_t num_queries) {
+  void Run(size_t num_queries) {
     size_t num_clients = queue_state_->client_queues.size();
     auto stats = RunStats(num_clients, num_queries);
 
     DBRequest req(-1, {});
     while (stats.total_reads < num_queries) {
-      // TODO: error handling
       int queue_idx = PullRequestFromQueues(req);
 
       auto start = std::chrono::high_resolution_clock::now();
@@ -81,10 +78,10 @@ public:
         // cout << "end: " << read.start_idx + read.read_size << endl;
         db_->Read(stats.dummy, read.start_idx, read.read_size);
         if (read.compute_duration > 0) {
-          auto compute_start = std::chrono::steady_clock::now();
+          auto compute_start = std::chrono::high_resolution_clock::now();
           auto timeout = std::chrono::milliseconds(read.compute_duration);
           volatile int vol_dummy = 0;
-          while (std::chrono::steady_clock::now() - compute_start < timeout) {
+          while (std::chrono::high_resolution_clock::now() - compute_start < timeout) {
             for (int i = 0; i < 500000; ++i) {
               vol_dummy += i;
             }
@@ -109,15 +106,15 @@ public:
           QueryStats{.queue_idx = queue_idx,
                      .start = time_since_epoch_ms,
                      .duration = duration.count()};
-
       ++stats.read_counts[queue_idx];
       ++stats.total_reads;
       PushResultsToQueues(queue_idx, duration.count());
     }
-    DumpStats(stats, worker_id, num_clients);
+    DumpStats(stats, num_clients);
   }
 
 private:
+  int worker_id_;
   const shared_ptr<FairDB> db_;
 
   std::shared_ptr<AllQueueState> queue_state_;
@@ -154,11 +151,11 @@ private:
 
     int idx = client2_max_ratio < client1_max_ratio;
 
-    cout << "Before: " << idx << ": "
-         << queue_state_->client_queues[0].cur_disk_bw << ", "
-         << queue_state_->client_queues[0].cur_cpu << ", "
-         << queue_state_->client_queues[1].cur_disk_bw << ","
-         << queue_state_->client_queues[1].cur_cpu << endl;
+    // cout << "Before: " << idx << ": "
+    //      << queue_state_->client_queues[0].cur_disk_bw << ", "
+    //      << queue_state_->client_queues[0].cur_cpu << ", "
+    //      << queue_state_->client_queues[1].cur_disk_bw << ","
+    //      << queue_state_->client_queues[1].cur_cpu << endl;
     if (idx == 0) {
       // Task A: 1/3GB read, 2/3s CPU
       queue_state_->client_queues[0].cur_disk_bw += 1; // out of 9
@@ -168,11 +165,11 @@ private:
       queue_state_->client_queues[1].cur_disk_bw += 3; // out of 9
       queue_state_->client_queues[1].cur_cpu += 1;     // out of 18
     }
-    cout << "After: " << idx << ": "
-         << queue_state_->client_queues[0].cur_disk_bw << ", "
-         << queue_state_->client_queues[0].cur_cpu << ", "
-         << queue_state_->client_queues[1].cur_disk_bw << ","
-         << queue_state_->client_queues[1].cur_cpu << endl;
+    // cout << "After: " << idx << ": "
+    //      << queue_state_->client_queues[0].cur_disk_bw << ", "
+    //      << queue_state_->client_queues[0].cur_cpu << ", "
+    //      << queue_state_->client_queues[1].cur_disk_bw << ","
+    //      << queue_state_->client_queues[1].cur_cpu << endl;
     return idx;
   }
 
@@ -213,7 +210,7 @@ private:
     }
   }
 
-  void DumpStats(RunStats &stats, int worker_id, int num_clients) {
+  void DumpStats(RunStats &stats, int num_clients) {
     vector<vector<int>> per_client_durations;
     per_client_durations.resize(num_clients);
     for (const auto query : stats.query_stats) {
@@ -234,27 +231,28 @@ private:
            << ")" << endl;
     }
 
-    std::ofstream output_file("results/results_" + std::to_string(worker_id) +
+    std::ofstream output_file("results/results_" + std::to_string(worker_id_) +
                               ".txt");
+    output_file << "ExecutionOrder:";
     for (const auto query : stats.query_stats) {
       output_file << query.queue_idx << ", ";
     }
-    output_file << endl << endl;
+    output_file << endl;
     for (const auto durs : per_client_durations) {
+      output_file << "ClientDurations:";
       for (const auto d : durs) {
         output_file << d << ", ";
       }
-      output_file << endl << endl;
+      output_file << endl;
     }
-    output_file << endl;
 
     for (const auto starts : per_client_starts) {
+      output_file << "ClientStarts:";
       for (const auto s : starts) {
         output_file << s << ", ";
       }
-      output_file << endl << endl;
+      output_file << endl;
     }
-    output_file << endl;
     output_file.close();
   }
 };
