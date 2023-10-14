@@ -18,27 +18,25 @@ using namespace std;
 using namespace moodycamel;
 
 // TODOs:
-// bring up DB once, run multiple queries
 // take flags as input
 // need better logic for handling empty queue?
 
-struct ClientQueue {
-  const std::shared_ptr<ReaderWriterQueue<DBRequest>>& queue;
-  int service_us = 0; // Service in microseconds given to this queue
+struct ClientQueueState {
+  const std::shared_ptr<ReaderWriterQueue<DBRequest>> &queue;
+  int service_us = 0;  // Service in microseconds given to this queue
+  int cur_cpu = 0;     // Current CPU in use
+  int cur_disk_bw = 0; // Current disk bw in use
 
-  ClientQueue(const std::shared_ptr<ReaderWriterQueue<DBRequest>>& queue) : queue(queue) {}
+  ClientQueueState(const std::shared_ptr<ReaderWriterQueue<DBRequest>> &queue)
+      : queue(queue) {}
 };
 
-// TODO: clean constructor up
-struct QueueState {
-  vector<ClientQueue> client_queues;
-  vector<int> cur_cpu;
-  vector<int> cur_disk_bw;
+struct AllQueueState {
+  vector<ClientQueueState> &client_queues;
   int cur_queue_idx = -1;
 
-  QueueState() : cur_cpu(2, 0), cur_disk_bw(2, 0){};
-  QueueState(vector<ClientQueue> client_queues)
-      : client_queues(client_queues), cur_cpu(2, 0), cur_disk_bw(2, 0) {}
+  AllQueueState(vector<ClientQueueState> &client_queues)
+      : client_queues(client_queues) {}
 };
 
 // TODO: histogram, nicer output format
@@ -62,7 +60,8 @@ struct RunStats {
 
 class DBWorker {
 public:
-  DBWorker(const shared_ptr<FairDB> db, std::shared_ptr<QueueState> queue_state,
+  DBWorker(const shared_ptr<FairDB> db,
+           std::shared_ptr<AllQueueState> queue_state,
            std::shared_ptr<std::mutex> queue_mutex)
       : db_(db), queue_state_(queue_state), queue_mutex_(queue_mutex) {}
 
@@ -121,7 +120,7 @@ public:
 private:
   const shared_ptr<FairDB> db_;
 
-  std::shared_ptr<QueueState> queue_state_;
+  std::shared_ptr<AllQueueState> queue_state_;
   std::shared_ptr<std::mutex> queue_mutex_;
 
   // TODO: improve multi-threading. Currently multiple threads will choose
@@ -143,31 +142,37 @@ private:
     const float max_cpu = 18.0;
     const float max_disk_bw = 9.0;
 
-    float client1_cpu_ratio = queue_state_->cur_cpu[0] / max_cpu;
-    float client1_disk_ratio = queue_state_->cur_disk_bw[0] / max_disk_bw;
+    float client1_disk_ratio =
+        queue_state_->client_queues[0].cur_disk_bw / max_disk_bw;
+    float client1_cpu_ratio = queue_state_->client_queues[0].cur_cpu / max_cpu;
     float client1_max_ratio = std::max(client1_cpu_ratio, client1_disk_ratio);
 
-    float client2_cpu_ratio = queue_state_->cur_cpu[1] / max_cpu;
-    float client2_disk_ratio = queue_state_->cur_disk_bw[1] / max_disk_bw;
+    float client2_disk_ratio =
+        queue_state_->client_queues[1].cur_disk_bw / max_disk_bw;
+    float client2_cpu_ratio = queue_state_->client_queues[1].cur_cpu / max_cpu;
     float client2_max_ratio = std::max(client2_cpu_ratio, client2_disk_ratio);
 
     int idx = client2_max_ratio < client1_max_ratio;
 
-    // cout << "Before: " << idx << ": " << queue_state_->cur_disk_bw[0] << ", "
-    // << queue_state_->cur_cpu[0] << ", " << queue_state_->cur_disk_bw[1] << ",
-    // " << queue_state_->cur_cpu[1] << endl;
+    cout << "Before: " << idx << ": "
+         << queue_state_->client_queues[0].cur_disk_bw << ", "
+         << queue_state_->client_queues[0].cur_cpu << ", "
+         << queue_state_->client_queues[1].cur_disk_bw << ","
+         << queue_state_->client_queues[1].cur_cpu << endl;
     if (idx == 0) {
       // Task A: 1/3GB read, 2/3s CPU
-      queue_state_->cur_disk_bw[0] += 1; // out of 9
-      queue_state_->cur_cpu[0] += 4;     // out of 18
+      queue_state_->client_queues[0].cur_disk_bw += 1; // out of 9
+      queue_state_->client_queues[0].cur_cpu += 4;     // out of 18
     } else {
       // Task B: 1GB read, 1/6s CPU
-      queue_state_->cur_disk_bw[1] += 3; // out of 9
-      queue_state_->cur_cpu[1] += 1;     // out of 18
+      queue_state_->client_queues[1].cur_disk_bw += 3; // out of 9
+      queue_state_->client_queues[1].cur_cpu += 1;     // out of 18
     }
-    // cout << "After: " << idx << ": " << queue_state_->cur_disk_bw[0] << ", "
-    // << queue_state_->cur_cpu[0] << ", " << queue_state_->cur_disk_bw[1] << ",
-    // " << queue_state_->cur_cpu[1] << endl;
+    cout << "After: " << idx << ": "
+         << queue_state_->client_queues[0].cur_disk_bw << ", "
+         << queue_state_->client_queues[0].cur_cpu << ", "
+         << queue_state_->client_queues[1].cur_disk_bw << ","
+         << queue_state_->client_queues[1].cur_cpu << endl;
     return idx;
   }
 
@@ -176,15 +181,15 @@ private:
            queue_state_->client_queues.size();
   }
 
-  // TODO: DWRR - give each queue some quantum each round.
+  // TODO: DWRR - give each queue quantum each round.
   // int DeficitWeightedRoundRobin(DBRequest &request) {}
 
   int PullRequestFromQueues(DBRequest &request) {
     std::lock_guard<std::mutex> lock(*queue_mutex_);
 
     // queue_state_->cur_queue_idx = MinimumServiceScheduling();
-    queue_state_->cur_queue_idx = RoundRobinScheduling();
-    // queue_state_->cur_queue_idx = DRFScheduling();
+    // queue_state_->cur_queue_idx = RoundRobinScheduling();
+    queue_state_->cur_queue_idx = DRFScheduling();
 
     while (!queue_state_->client_queues[queue_state_->cur_queue_idx]
                 .queue->try_dequeue(request)) {
@@ -199,12 +204,12 @@ private:
 
     if (queue_idx == 0) {
       // Task A: 1/3GB read, 2/3s CPU
-      queue_state_->cur_disk_bw[0] -= 1; // out of 9
-      queue_state_->cur_cpu[0] -= 4;     // out of 18
+      queue_state_->client_queues[0].cur_disk_bw -= 1; // out of 9
+      queue_state_->client_queues[0].cur_cpu -= 4;     // out of 18
     } else {
       // Task B: 1GB read, 1/6s CPU
-      queue_state_->cur_disk_bw[1] -= 3; // out of 9
-      queue_state_->cur_cpu[1] -= 1;     // out of 18
+      queue_state_->client_queues[1].cur_disk_bw -= 3; // out of 9
+      queue_state_->client_queues[1].cur_cpu -= 1;     // out of 18
     }
   }
 

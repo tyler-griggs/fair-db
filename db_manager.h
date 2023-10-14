@@ -16,23 +16,16 @@ public:
 
   void Init() { database_->Init(db_size_elements_); }
 
-  void Run(const std::vector<std::shared_ptr<ReaderWriterQueue<DBRequest>>>& client_queues,
-           size_t num_threads, 
-           const std::vector<int>& worker_cores, 
-           int worker_queries) {
+  void Run(const std::shared_ptr<AllQueueState> queue_state, size_t num_threads,
+           const std::vector<int> &worker_cores, int worker_queries) {
     std::vector<std::thread> worker_threads;
     std::shared_ptr<std::mutex> queue_mutex = std::make_shared<std::mutex>();
 
-    auto queue_state = std::make_shared<QueueState>();
-    for (const auto q : client_queues) {
-      queue_state->client_queues.push_back(ClientQueue(q));
-    }
-
     for (int i = 0; i < num_threads; ++i) {
-      worker_threads.push_back(
-          std::thread([this, queue_state, queue_mutex, worker_queries, i] {
-            DBWorker(database_, queue_state, queue_mutex).Run(i, worker_queries);
-          }));
+      worker_threads.push_back(std::thread([this, queue_state, queue_mutex,
+                                            worker_queries, i] {
+        DBWorker(database_, queue_state, queue_mutex).Run(i, worker_queries);
+      }));
       SetThreadAffinity(worker_threads[i], worker_cores[i]);
     }
 

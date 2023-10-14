@@ -37,27 +37,27 @@ struct DBRequest {
 
 class DBClient {
 public:
-  DBClient(int client_id, 
-           const std::shared_ptr<ReaderWriterQueue<DBRequest>>& request_queue,
-           size_t db_size_elements, 
-           size_t read_size,
+  DBClient(int client_id,
+           const std::shared_ptr<ReaderWriterQueue<DBRequest>> &request_queue,
+           size_t db_size_elements, size_t read_size,
            size_t compute_duration_ms)
       : client_id_(client_id), request_queue_(request_queue),
         db_size_elements_(db_size_elements), read_size_(read_size),
         compute_duration_ms_(compute_duration_ms) {}
 
   // Run the sequential read workload.
-  std::thread RunSequential(std::atomic<bool>& stop) {
+  std::thread RunSequential(std::atomic<bool> &stop) {
     srand(time(0));
     cout << "Client ID " << client_id_ << " running Sequential workload of "
          << read_size_ / 1e6 << "M elements." << endl;
     std::thread client_thread([this, &stop] {
-
       while (!stop.load()) {
         int start_idx = rand() % (db_size_elements_ - read_size_);
-        std::vector<SingleRead> req{SingleRead(start_idx, read_size_, compute_duration_ms_)};
+        std::vector<SingleRead> req{
+            SingleRead(start_idx, read_size_, compute_duration_ms_)};
 
-        while (!request_queue_->try_enqueue(DBRequest(client_id_, req)) && !stop.load()) {
+        while (!request_queue_->try_enqueue(DBRequest(client_id_, req)) &&
+               !stop.load()) {
           std::this_thread::sleep_for(std::chrono::microseconds(10));
         }
       }
@@ -67,7 +67,7 @@ public:
   }
 
   // Run the random read workload.
-  std::thread RunRandom(std::atomic<bool>& stop, int num_random) {
+  std::thread RunRandom(std::atomic<bool> &stop, int num_random) {
     srand(time(0));
     cout << "Client ID " << client_id_ << " running Random workload  of "
          << read_size_ / 1e6 << "M elements." << endl;
@@ -80,7 +80,8 @@ public:
           reqs.push_back(SingleRead(start_idx, read_size_ / num_random));
         }
 
-        while (!request_queue_->try_enqueue(DBRequest(client_id_, reqs)) && !stop.load()) {
+        while (!request_queue_->try_enqueue(DBRequest(client_id_, reqs)) &&
+               !stop.load()) {
           std::this_thread::sleep_for(std::chrono::microseconds(10));
         }
       }
@@ -91,7 +92,7 @@ public:
 
 private:
   const int client_id_;
-  const std::shared_ptr<ReaderWriterQueue<DBRequest>>& request_queue_;
+  const std::shared_ptr<ReaderWriterQueue<DBRequest>> &request_queue_;
   const size_t db_size_elements_;
   const size_t read_size_;
   const size_t compute_duration_ms_;
