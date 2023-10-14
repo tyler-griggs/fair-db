@@ -1,6 +1,7 @@
 #ifndef DB_WORKER_H
 #define DB_WORKER_H
 
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <limits>
@@ -34,32 +35,30 @@ struct ClientQueue {
   ClientQueue(ReaderWriterQueue<DBRequest> *queue) : queue(queue) {}
 };
 
+// TODO: clean constructor up
 struct QueueState {
   vector<ClientQueue> client_queues;
+  vector<int> cur_cpu;
+  vector<int> cur_disk_bw;
   int cur_queue_idx = -1;
 
-  QueueState(){};
+  QueueState() : cur_cpu(2, 0), cur_disk_bw(2, 0){};
   QueueState(vector<ClientQueue> client_queues)
-      : client_queues(client_queues) {}
+      : client_queues(client_queues), cur_cpu(2, 0), cur_disk_bw(2, 0) {}
 };
 
 // TODO: histogram, nicer output format
 struct QueryStats {
   int queue_idx;
+  long start;
   long duration;
-  // TODO: completion timestamp
 };
 
 struct RunStats {
   vector<int> read_counts;
   int total_reads = 0;
-
-  vector<QueryStats> query_stats;
-
-  // vector<vector<int>> query_durations;
   long dummy = 0;
-
-  // vector<int> execution_order;
+  vector<QueryStats> query_stats;
 
   RunStats(size_t num_clients, size_t num_reads) {
     read_counts = std::vector<int>(num_clients, 0);
@@ -69,17 +68,12 @@ struct RunStats {
 
 class DBWorker {
 public:
-  DBWorker(const shared_ptr<FairDB> db,
-           vector<ReaderWriterQueue<DBRequest> *> client_queues,
+  DBWorker(const shared_ptr<FairDB> db, std::shared_ptr<QueueState> queue_state,
            std::shared_ptr<std::mutex> queue_mutex)
-      : db_(db), queue_mutex_(queue_mutex) {
-    for (const auto q : client_queues) {
-      queue_state_.client_queues.push_back(ClientQueue(q));
-    }
-  }
+      : db_(db), queue_state_(queue_state), queue_mutex_(queue_mutex) {}
 
   void Run(int worker_id, size_t num_queries) {
-    size_t num_clients = queue_state_.client_queues.size();
+    size_t num_clients = queue_state_->client_queues.size();
     auto stats = RunStats(num_clients, num_queries);
 
     DBRequest req(-1, {});
@@ -89,15 +83,10 @@ public:
 
       auto start = std::chrono::high_resolution_clock::now();
       for (const auto read : req.reads) {
-        auto ministart = std::chrono::high_resolution_clock::now();
         // cout << "read size: " << read.read_size << endl;
         // cout << "start: " << read.start_idx << endl;
         // cout << "end: " << read.start_idx + read.read_size << endl;
         db_->Read(stats.dummy, read.start_idx, read.read_size);
-        // for (int j = 0; j < read.read_size; ++j) {
-        //   stats.dummy += (*db_)[read.start_idx + j] % 2;
-        // }
-
         if (read.compute_duration > 0) {
           auto compute_start = std::chrono::steady_clock::now();
           auto timeout = std::chrono::milliseconds(read.compute_duration);
@@ -112,23 +101,22 @@ public:
           }
           stats.dummy += vol_dummy;
         }
-
-        auto ministop = std::chrono::high_resolution_clock::now();
-        auto miniduration =
-            std::chrono::duration_cast<std::chrono::microseconds>(ministop -
-                                                                  ministart);
-        // cout << "dur: " << miniduration.count() << endl;;
       }
       auto stop = std::chrono::high_resolution_clock::now();
       auto duration =
           std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+      // cout << "dur: " << duration.count() << endl;;
+
+      auto time_since_epoch_ms =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              start.time_since_epoch())
+              .count();
 
       stats.query_stats[stats.total_reads] =
-          QueryStats{.queue_idx = queue_idx, .duration = duration.count()};
+          QueryStats{.queue_idx = queue_idx,
+                     .start = time_since_epoch_ms,
+                     .duration = duration.count()};
 
-      // stats.query_durations[queue_idx][stats.read_counts[queue_idx]] =
-      //     duration.count();
-      // stats.execution_order[stats.total_reads] = queue_idx;
       ++stats.read_counts[queue_idx];
       ++stats.total_reads;
       PushResultsToQueues(queue_idx, duration.count());
@@ -138,8 +126,8 @@ public:
 
 private:
   const shared_ptr<FairDB> db_;
-  // const vector<int> *db_;
-  QueueState queue_state_;
+
+  std::shared_ptr<QueueState> queue_state_;
   std::shared_ptr<std::mutex> queue_mutex_;
 
   // TODO: improve multi-threading. Currently multiple threads will choose
@@ -147,8 +135,8 @@ private:
   int MinimumServiceScheduling() {
     int min_service = std::numeric_limits<int>::max();
     int min_idx;
-    for (int i = 0; i < queue_state_.client_queues.size(); ++i) {
-      const auto &q = queue_state_.client_queues[i];
+    for (int i = 0; i < queue_state_->client_queues.size(); ++i) {
+      const auto &q = queue_state_->client_queues[i];
       if (q.service_us < min_service) {
         min_service = q.service_us;
         min_idx = i;
@@ -157,29 +145,73 @@ private:
     return min_idx;
   }
 
+  int DRFScheduling() {
+    const float max_cpu = 18.0;
+    const float max_disk_bw = 9.0;
+
+    float client1_cpu_ratio = queue_state_->cur_cpu[0] / max_cpu;
+    float client1_disk_ratio = queue_state_->cur_disk_bw[0] / max_disk_bw;
+    float client1_max_ratio = std::max(client1_cpu_ratio, client1_disk_ratio);
+
+    float client2_cpu_ratio = queue_state_->cur_cpu[1] / max_cpu;
+    float client2_disk_ratio = queue_state_->cur_disk_bw[1] / max_disk_bw;
+    float client2_max_ratio = std::max(client2_cpu_ratio, client2_disk_ratio);
+
+    int idx = client2_max_ratio < client1_max_ratio;
+
+    // cout << "Before: " << idx << ": " << queue_state_->cur_disk_bw[0] << ", "
+    // << queue_state_->cur_cpu[0] << ", " << queue_state_->cur_disk_bw[1] << ",
+    // " << queue_state_->cur_cpu[1] << endl;
+    if (idx == 0) {
+      // Task A: 1/3GB read, 2/3s CPU
+      queue_state_->cur_disk_bw[0] += 1; // out of 9
+      queue_state_->cur_cpu[0] += 4;     // out of 18
+    } else {
+      // Task B: 1GB read, 1/6s CPU
+      queue_state_->cur_disk_bw[1] += 3; // out of 9
+      queue_state_->cur_cpu[1] += 1;     // out of 18
+    }
+    // cout << "After: " << idx << ": " << queue_state_->cur_disk_bw[0] << ", "
+    // << queue_state_->cur_cpu[0] << ", " << queue_state_->cur_disk_bw[1] << ",
+    // " << queue_state_->cur_cpu[1] << endl;
+    return idx;
+  }
+
   int RoundRobinScheduling() {
-    return (queue_state_.cur_queue_idx + 1) % queue_state_.client_queues.size();
+    return (queue_state_->cur_queue_idx + 1) %
+           queue_state_->client_queues.size();
   }
 
   // TODO: DWRR - give each queue some quantum each round.
   // int DeficitWeightedRoundRobin(DBRequest &request) {}
 
   int PullRequestFromQueues(DBRequest &request) {
-    // TODO: locking for multi-threads.
     std::lock_guard<std::mutex> lock(*queue_mutex_);
 
-    queue_state_.cur_queue_idx = MinimumServiceScheduling();
-    // queue_state_.cur_queue_idx = RoundRobinScheduling();
+    // queue_state_->cur_queue_idx = MinimumServiceScheduling();
+    queue_state_->cur_queue_idx = RoundRobinScheduling();
+    // queue_state_->cur_queue_idx = DRFScheduling();
 
-    while (!queue_state_.client_queues[queue_state_.cur_queue_idx]
+    while (!queue_state_->client_queues[queue_state_->cur_queue_idx]
                 .queue->try_dequeue(request)) {
       // std::this_thread::sleep_for(std::chrono::microseconds(10));
     }
-    return queue_state_.cur_queue_idx;
+    return queue_state_->cur_queue_idx;
   }
 
   void PushResultsToQueues(int queue_idx, int service_duration_us) {
-    queue_state_.client_queues[queue_idx].service_us += service_duration_us;
+    std::lock_guard<std::mutex> lock(*queue_mutex_);
+    queue_state_->client_queues[queue_idx].service_us += service_duration_us;
+
+    if (queue_idx == 0) {
+      // Task A: 1/3GB read, 2/3s CPU
+      queue_state_->cur_disk_bw[0] -= 1; // out of 9
+      queue_state_->cur_cpu[0] -= 4;     // out of 18
+    } else {
+      // Task B: 1GB read, 1/6s CPU
+      queue_state_->cur_disk_bw[1] -= 3; // out of 9
+      queue_state_->cur_cpu[1] -= 1;     // out of 18
+    }
   }
 
   void DumpStats(RunStats &stats, int worker_id, int num_clients) {
@@ -188,6 +220,13 @@ private:
     for (const auto query : stats.query_stats) {
       per_client_durations[query.queue_idx].push_back(query.duration);
     }
+
+    vector<vector<int>> per_client_starts;
+    per_client_starts.resize(num_clients);
+    for (const auto query : stats.query_stats) {
+      per_client_starts[query.queue_idx].push_back(query.start);
+    }
+
     for (int i = 0; i < per_client_durations.size(); ++i) {
       const auto durs = per_client_durations[i];
       int duration_avg =
@@ -205,6 +244,14 @@ private:
     for (const auto durs : per_client_durations) {
       for (const auto d : durs) {
         output_file << d << ", ";
+      }
+      output_file << endl << endl;
+    }
+    output_file << endl;
+
+    for (const auto starts : per_client_starts) {
+      for (const auto s : starts) {
+        output_file << s << ", ";
       }
       output_file << endl << endl;
     }

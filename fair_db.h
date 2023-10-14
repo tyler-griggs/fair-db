@@ -8,8 +8,6 @@
 using namespace std;
 const std::size_t CHUNK_SIZE = 4e9; // 4B ints, 16GB
 
-// TODO: Create abstract DB, then create instantiations that are for disk or
-// memeory Base class for database types
 class FairDB {
 public:
   virtual ~FairDB() {}
@@ -54,7 +52,7 @@ private:
 class DiskFairDB : public FairDB {
 public:
   void Init(size_t db_size_elements) override {
-    const std::string filepath("/mnt/disks/db/db.bin");
+    const std::string filepath("/mnt/disks/fairdb/db.bin");
     read_file_ = std::ifstream(filepath, std::ios::binary);
     if (!read_file_.is_open()) {
       std::cerr << "Error opening file for reading: " << filepath << std::endl;

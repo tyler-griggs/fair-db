@@ -20,12 +20,17 @@ public:
            size_t num_threads, int worker_reads) {
     std::vector<std::thread> worker_threads;
     std::shared_ptr<std::mutex> queue_mutex = std::make_shared<std::mutex>();
-    // const vector<int> *db = database();
+
+    auto queue_state = std::make_shared<QueueState>();
+    for (const auto q : client_queues) {
+      queue_state->client_queues.push_back(ClientQueue(q));
+    }
+
     for (int i = 0; i < num_threads; ++i) {
-      worker_threads.push_back(std::thread([this, client_queues, queue_mutex,
-                                            worker_reads, i] {
-        DBWorker(database_, client_queues, queue_mutex).Run(i, worker_reads);
-      }));
+      worker_threads.push_back(
+          std::thread([this, queue_state, queue_mutex, worker_reads, i] {
+            DBWorker(database_, queue_state, queue_mutex).Run(i, worker_reads);
+          }));
       // TODO: cleaner way to do this (ie, remove constant)
       SetThreadAffinity(worker_threads[i], 1 + i);
     }
@@ -34,8 +39,6 @@ public:
       worker_threads[i].join();
     }
   }
-
-  // vector<int> *database() { return &db_; }
 
   size_t db_size_elements() { return db_size_elements_; }
 

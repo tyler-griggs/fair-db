@@ -12,7 +12,7 @@
 using namespace moodycamel;
 using namespace std;
 
-// TODO: add internaal metric state
+// TODO: Add internal metric state
 
 // TODO: create client arguments to modify request size, type, frequency, etc.
 struct SingleRead {
