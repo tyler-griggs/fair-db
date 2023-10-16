@@ -15,14 +15,18 @@
 #include "fair_db.h"
 
 using namespace std;
-using namespace moodycamel;
-
 
 struct ClientQueueState {
   const std::shared_ptr<ReaderWriterQueue<DBRequest>> &queue;
   int service_us = 0;  // Service in microseconds given to this queue
   int cur_cpu = 0;     // Current CPU in use
   int cur_disk_bw = 0; // Current disk bw in use
+
+  // All in normalized microseconds.
+  int cpu_virtual_start = 0;
+  int cpu_virtual_finish = 0;
+  int disk_virtual_start = 0;
+  int disk_virtual_finish = 0;
 
   ClientQueueState(const std::shared_ptr<ReaderWriterQueue<DBRequest>> &queue)
       : queue(queue) {}
@@ -39,8 +43,8 @@ struct AllQueueState {
 // TODO: histogram, nicer output format
 struct QueryStats {
   int queue_idx;
-  long start;
-  long duration;
+  long start;  // microseconds since epoch
+  long duration;  // microseconds
 };
 
 struct RunStats {
@@ -97,14 +101,14 @@ public:
           std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
       // cout << "dur: " << duration.count() << endl;;
 
-      auto time_since_epoch_ms =
-          std::chrono::duration_cast<std::chrono::milliseconds>(
+      auto time_since_epoch_us =
+          std::chrono::duration_cast<std::chrono::microseconds>(
               start.time_since_epoch())
               .count();
 
       stats.query_stats[stats.total_reads] =
           QueryStats{.queue_idx = queue_idx,
-                     .start = time_since_epoch_ms,
+                     .start = time_since_epoch_us,
                      .duration = duration.count()};
       ++stats.read_counts[queue_idx];
       ++stats.total_reads;
@@ -135,6 +139,92 @@ private:
     return min_idx;
   }
 
+  int DRFQScheduling() {
+    // TODO: configure this
+    int delta = 0;
+
+    // Client 1
+    // 1. S(p) for CPU
+    // a. V(a) for CPU <---- for now this is arrival to front of queue
+      // i. S(p) for Client 2 CPU
+      // i. S(p)-Delta for Client 2 Disk
+    
+    // DONE
+    // b. B1(p^k-1) for CPU
+      // i. F(p^k-1) for CPU
+      // ii. F(p^k-1)-delta for Disk
+
+    // Client1 - CPU
+    // TODO: make sure other client's virtual start is updated when idle
+    // TODO: base case when no packets are processed
+    int client1_cpu_v =
+        std::max(queue_state_->client_queues[1].cpu_virtual_start,
+                 queue_state_->client_queues[1].disk_virtual_start - delta);
+
+    // TODO: Currently assuming we know op cost: we should update this finish
+    //       time as soon as the op starts.
+    int client1_cpu_b1 = 
+        std::max(queue_state_->client_queues[0].cpu_virtual_finish, 
+                 queue_state_->client_queues[0].disk_virtual_finish - delta);
+
+    int client1_cpu_s = std::max(client1_cpu_v, client1_cpu_b1);
+
+
+    // Client1 - Disk
+    int client1_disk_v =
+        std::max(queue_state_->client_queues[1].disk_virtual_start,
+                 queue_state_->client_queues[1].cpu_virtual_start - delta);
+    int client1_disk_b1 = 
+        std::max(queue_state_->client_queues[0].disk_virtual_finish, 
+                 queue_state_->client_queues[0].cpu_virtual_finish - delta);
+    int client1_disk_s = std::max(client1_disk_v, client1_disk_b1);
+
+    int client1_start = std::max(client1_cpu_s, client1_disk_s);
+    
+
+    // Client2 - CPU
+    int client2_cpu_v =
+        std::max(queue_state_->client_queues[0].cpu_virtual_start,
+                 queue_state_->client_queues[0].disk_virtual_start - delta);
+    int client2_cpu_b1 = 
+        std::max(queue_state_->client_queues[1].cpu_virtual_finish, 
+                 queue_state_->client_queues[1].disk_virtual_finish - delta);
+    int client2_cpu_s = std::max(client2_cpu_v, client2_cpu_b1);
+
+
+    // Client2 - Disk
+    int client2_disk_v =
+        std::max(queue_state_->client_queues[0].disk_virtual_start,
+                 queue_state_->client_queues[0].cpu_virtual_start - delta);
+    int client2_disk_b1 = 
+        std::max(queue_state_->client_queues[1].disk_virtual_finish, 
+                 queue_state_->client_queues[1].cpu_virtual_finish - delta);
+    int client2_disk_s = std::max(client2_disk_v, client2_disk_b1);
+
+    int client2_start = std::max(client2_cpu_s, client2_disk_s);
+    
+    // Choose the client with the earliest start time.
+    int next_client_idx = client1_start < client2_start ? 0 : 1;
+
+    // For the chosen client, update the start time for each resource. 
+    // TODO: Currently assuming we know op cost: update finish times too.
+    if (next_client_idx == 0) {
+      // Task A: 1/3GB read (out of 3GB/s), 2/3s CPU (out of 3CPUs)
+      queue_state_->client_queues[0].disk_virtual_start = client1_disk_s;
+      queue_state_->client_queues[0].disk_virtual_finish = client1_disk_s + 111111;  // 1/9s
+      queue_state_->client_queues[0].cpu_virtual_start = client1_cpu_s;
+      queue_state_->client_queues[0].cpu_virtual_finish = client1_cpu_s + 222222; // 2/9s
+    } else {
+      // Task B: 1GB read (out of 3GB/s), 1/6s CPU (out of 3CPUs)
+      queue_state_->client_queues[1].disk_virtual_start = client2_disk_s;
+      queue_state_->client_queues[1].disk_virtual_finish = client2_disk_s + 333333; // 1/3s
+      queue_state_->client_queues[1].cpu_virtual_start = client2_cpu_s;
+      queue_state_->client_queues[1].cpu_virtual_finish = client2_cpu_s + 55555;  // 1/18s
+    }
+    return next_client_idx;
+  }
+
+  // Based on current usage (ie, outstanding ops)
   int DRFScheduling() {
     const float max_cpu = 18.0;
     const float max_disk_bw = 9.0;
@@ -186,7 +276,8 @@ private:
 
     // queue_state_->cur_queue_idx = MinimumServiceScheduling();
     // queue_state_->cur_queue_idx = RoundRobinScheduling();
-    queue_state_->cur_queue_idx = DRFScheduling();
+    // queue_state_->cur_queue_idx = DRFScheduling();
+    queue_state_->cur_queue_idx = DRFQScheduling();
 
     while (!queue_state_->client_queues[queue_state_->cur_queue_idx]
                 .queue->try_dequeue(request)) {

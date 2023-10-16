@@ -12,21 +12,20 @@
 #include "utils.h"
 
 using namespace std;
-using namespace moodycamel;
 
 int main() {
   srand(time(0));
-  size_t db_size = 20e9; // Number of elements in the db (cur ~= 80GB)
+  size_t db_size = 40e9; // Number of elements in the db (cur ~= 160GB)
   size_t datatype_size = sizeof(int);
 
-  int num_queries = 4;                // Queries per worker until DB shuts down.
-  size_t client1_read_size = 1e9 / 3; // Bytes per request.  (cur ~= 1/3GB)
+  int num_queries = 100;                // Queries per worker until DB shuts down.
+  size_t client1_read_size = 1e9 / 3; // Bytes per request.  (cur ~= 1/3GB)j
   int client1_compute_ms = 667;       // Fake compute task duration.
 
   size_t client2_read_size = 1e9; // Bytes per request.  (cur ~= 1GB)
   int client2_compute_ms = 167;   // Fake compute task duration.
 
-  int num_worker_threads = 3;
+  int num_worker_threads = 2;
 
   // Core IDs for clients and workers. Clients share a core.
   int client_core = 0;
