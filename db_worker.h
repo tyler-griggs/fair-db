@@ -43,8 +43,9 @@ struct AllQueueState {
 // TODO: histogram, nicer output format
 struct QueryStats {
   int queue_idx;
+  int client_id;
   int64_t start;  // microseconds since epoch
-  int64_t read_duration;  // microseconds
+  // int64_t read_duration;  // microseconds
   int64_t total_duration;  // microseconds
 };
 
@@ -83,6 +84,7 @@ struct DBWorkerOptions {
 
   // 0 - read
   // 1 - compute
+  // 2 - read+compute
   int task;
 
   // -1 - none
@@ -95,32 +97,31 @@ class DBWorker {
 public:
   DBWorker(int worker_id,
            const shared_ptr<FairDB> db,
-           std::shared_ptr<AllQueueState> queue_state,
-           std::shared_ptr<std::mutex> queue_mutex)
-      : worker_id_(worker_id), db_(db), queue_state_(queue_state), queue_mutex_(queue_mutex) {}
+           DBWorkerOptions options)
+      : worker_id_(worker_id), db_(db), queue_state_(options.input_queue_state), 
+        queue_mutex_(options.input_queue_mutex), output_queue_(options.output_queue),
+        scheduler_(options.scheduler), task_(options.task), next_task_(options.task) {}
 
-  void Run(size_t num_queries) {
-    size_t num_clients = queue_state_->client_queues.size();
+  void Run(size_t num_queries, size_t num_clients, std::atomic<bool> &stop) {
+
+    // TODO: WRONG
+    // size_t num_clients = queue_state_->client_queues.size();
     auto stats = RunStats(num_clients, num_queries);
 
     DBRequest req(-1, {});
-    while (stats.total_reads < num_queries) {
+    while (stats.total_reads < num_queries && !stop.load()) {
       int queue_idx = PullRequestFromQueues(req);
 
       auto start = std::chrono::high_resolution_clock::now();
-      int64_t read_duration;
-
-      // TODO: currently assuming a single read
-      for (const auto read : req.reads) {
-        // cout << "read size: " << read.read_size << endl;
-        // cout << "start: " << read.start_idx << endl;
-        // cout << "end: " << read.start_idx + read.read_size << endl;
-
+      const auto read = req.reads[0];
+      if (task_ == 0 || task_ == 2) {
         /* ====== READ PHASE ======= */
+        // TODO: currently assuming a single read
+        // cout << "Executing read phase on worker " << worker_id_ << endl;
         db_->Read(stats.dummy, read.start_idx, read.read_size);
-        auto read_end = std::chrono::high_resolution_clock::now();
-        read_duration = std::chrono::duration_cast<std::chrono::microseconds>(read_end - start).count();
-
+      }
+      if (task_ == 1 || task_ == 2) {
+        // cout << "Executing compute phase on worker " << worker_id_ << endl;
         /* ====== COMPUTE PHASE ======= */
         if (read.compute_duration > 0) {
           auto compute_start = std::chrono::high_resolution_clock::now();
@@ -137,6 +138,36 @@ public:
           stats.dummy += vol_dummy;
         }
       }
+
+
+
+      // int64_t read_duration;
+      // for (const auto read : req.reads) {
+      //   // cout << "read size: " << read.read_size << endl;
+      //   // cout << "start: " << read.start_idx << endl;
+      //   // cout << "end: " << read.start_idx + read.read_size << endl;
+
+      //   /* ====== READ PHASE ======= */
+      //   db_->Read(stats.dummy, read.start_idx, read.read_size);
+      //   auto read_end = std::chrono::high_resolution_clock::now();
+      //   read_duration = std::chrono::duration_cast<std::chrono::microseconds>(read_end - start).count();
+
+      //   /* ====== COMPUTE PHASE ======= */
+      //   if (read.compute_duration > 0) {
+      //     auto compute_start = std::chrono::high_resolution_clock::now();
+      //     auto timeout = std::chrono::milliseconds(read.compute_duration);
+      //     volatile int vol_dummy = 0;
+      //     while (std::chrono::high_resolution_clock::now() - compute_start < timeout) {
+      //       for (int i = 0; i < 500000; ++i) {
+      //         vol_dummy += i;
+      //       }
+      //       for (int i = 0; i < 500000; ++i) {
+      //         vol_dummy -= i;
+      //       }
+      //     }
+      //     stats.dummy += vol_dummy;
+      //   }
+      // }
       auto stop = std::chrono::high_resolution_clock::now();
       const int64_t total_duration =
           std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
@@ -149,12 +180,18 @@ public:
 
       stats.query_stats[stats.total_reads] =
           QueryStats{.queue_idx = queue_idx,
+                     .client_id = req.client_id,
                      .start = time_since_epoch_us,
-                     .read_duration = read_duration,
+                    //  .read_duration = read_duration,
                      .total_duration = total_duration};
-      ++stats.read_counts[queue_idx];
+      // ++stats.read_counts[queue_idx];
+      ++stats.read_counts[req.client_id];
       ++stats.total_reads;
-      PushResultsToQueues(queue_idx, total_duration);
+
+      // TODO: huge update needed to this to separate queue_idx and client_id
+      PushResultsToInputQueues(queue_idx, total_duration);
+
+      PassToNextQueue(req);
     }
     DumpStats(stats, num_clients);
   }
@@ -165,6 +202,11 @@ private:
 
   std::shared_ptr<AllQueueState> queue_state_;
   std::shared_ptr<std::mutex> queue_mutex_;
+
+  std::shared_ptr<ReaderWriterQueue<DBRequest>> output_queue_;
+  int scheduler_;
+  int task_;
+  int next_task_;
 
   // TODO: improve multi-threading. Currently multiple threads will choose
   // the same least-service queue
@@ -319,8 +361,22 @@ private:
   int PullRequestFromQueues(DBRequest &request) {
     std::lock_guard<std::mutex> lock(*queue_mutex_);
 
+    // TODO: so gross, clean this up
+    // 0 - RR
+    // 1 - DRFQ
+    // 2 - DRF
+    // 3 - Fair share
+    if (scheduler_ == 0) {
+      queue_state_->cur_queue_idx = RoundRobinScheduling();
+    } else if (scheduler_ == 3) {
+      queue_state_->cur_queue_idx = MinimumServiceScheduling();
+    } else {
+      cout << "Using default RR scheduler." << endl;
+      queue_state_->cur_queue_idx = RoundRobinScheduling();
+    }
+
     // queue_state_->cur_queue_idx = MinimumServiceScheduling();
-    queue_state_->cur_queue_idx = RoundRobinScheduling();
+    // queue_state_->cur_queue_idx = RoundRobinScheduling();
     // queue_state_->cur_queue_idx = DRFScheduling();
     // queue_state_->cur_queue_idx = DRFQScheduling();
 
@@ -331,7 +387,7 @@ private:
     return queue_state_->cur_queue_idx;
   }
 
-  void PushResultsToQueues(int queue_idx, int service_duration_us) {
+  void PushResultsToInputQueues(int queue_idx, int service_duration_us) {
     std::lock_guard<std::mutex> lock(*queue_mutex_);
     queue_state_->client_queues[queue_idx].service_us += service_duration_us;
 
@@ -346,17 +402,28 @@ private:
     }
   }
 
+  void PassToNextQueue(DBRequest request) {
+    if (output_queue_ == nullptr) {
+      return;
+    }
+    while (!output_queue_->try_enqueue(request)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+
   void DumpStats(RunStats &stats, int num_clients) {
     vector<vector<int64_t>> per_client_durations;
     per_client_durations.resize(num_clients);
     for (const auto query : stats.query_stats) {
-      per_client_durations[query.queue_idx].push_back(query.total_duration);
+      // per_client_durations[query.queue_idx].push_back(query.total_duration);
+      per_client_durations[query.client_id].push_back(query.total_duration);
     }
 
     vector<vector<int64_t>> per_client_starts;
     per_client_starts.resize(num_clients);
     for (const auto query : stats.query_stats) {
-      per_client_starts[query.queue_idx].push_back(query.start);
+      // per_client_starts[query.queue_idx].push_back(query.start);
+      per_client_starts[query.client_id].push_back(query.start);
     }
 
     for (int i = 0; i < per_client_durations.size(); ++i) {
@@ -371,7 +438,8 @@ private:
                               ".txt");
     output_file << "ExecutionOrder:";
     for (const auto query : stats.query_stats) {
-      output_file << query.queue_idx << ", ";
+      // output_file << query.queue_idx << ", ";
+      output_file << query.client_id << ", ";
     }
     output_file << endl;
     for (const auto durs : per_client_durations) {
