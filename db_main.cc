@@ -13,21 +13,44 @@
 
 using namespace std;
 
-// TODO: Track the global 
+// TODOs:
+// run DB for TIME, shut down all workers after
+
+// Is least service based on queue right now?
+// per-client sync vs async
+// bursty client
+// per-client queue max between pipeline steps (creates synchrony from async)
+// update queue naming from "client queues"
+// clean up scripts: 1) per-client timeline, 2) per-worker timeline
+// real DRFQ
+
 int main() {
   srand(time(0));
   size_t db_size = 40e9; // Number of elements in the db (40B ints, 160GB)
   size_t datatype_size = sizeof(int);
 
-  int num_queries = 10;                // Queries per worker until DB shuts down.
-  // size_t client1_read_size = 1e9; // Bytes per request.  (cur ~= 2GB)
-  // int client1_compute_ms = 100;       // Fake compute task duration.
+  int run_duration_s = 30;  // Workload duration before shutdown
 
-  size_t client1_read_size = 1e9 / 3; // Bytes per request.  (cur ~= 1/3GB)
-  int client1_compute_ms = 667;       // Fake compute task duration.
+  int num_queries = 16;                // Queries per worker until DB shuts down.
+  int max_interop_queueing = 1;
 
-  size_t client2_read_size = 1e9; // Bytes per request.  (cur ~= 1GB)
-  int client2_compute_ms = 167;   // Fake compute task duration.
+  size_t client1_read_size = 2 * 1e9;  // ~950ms
+  int client1_compute_ms = 0.81 * 1000;
+
+  size_t client2_read_size = 0.5 * 1e9;  // ~270ms
+  int client2_compute_ms = 0.3 * 1000;
+
+  // size_t client1_read_size = 1.1 * 1e9;
+  // int client1_compute_ms = 0.0625 * 1000;
+
+  // size_t client2_read_size = 0.55 * 1e9;
+  // int client2_compute_ms = 0.75 * 1000;
+
+  // size_t client1_read_size = 1e9 / 3; // Bytes per request.  (cur ~= 1/3GB)
+  // int client1_compute_ms = 667;       // Fake compute task duration.
+
+  // size_t client2_read_size = 1e9; // Bytes per request.  (cur ~= 1GB)
+  // int client2_compute_ms = 167;   // Fake compute task duration.
 
   int num_worker_threads = 4;
 
@@ -87,53 +110,61 @@ int main() {
 
 
     std::shared_ptr<std::mutex> client_queue_mutex = std::make_shared<std::mutex>();
+    std::shared_ptr<std::mutex> output_queue_mutex = std::make_shared<std::mutex>();
+
+    // Create inter-op queues
+    auto client1_output_queue = std::make_shared<ReaderWriterQueue<DBRequest>>(max_interop_queueing);
+    auto client2_output_queue = std::make_shared<ReaderWriterQueue<DBRequest>>(max_interop_queueing);
 
     // Worker 1
-    auto worker1_to_worker2 = std::make_shared<ReaderWriterQueue<DBRequest>>(max_query_queue_length);
     DBWorkerOptions worker1_options{
       .input_queue_state = client_queue_state,
       .input_queue_mutex = client_queue_mutex,
-      .output_queue = worker1_to_worker2,
-      .scheduler = 0,  // Round Robin
+      .output_queue1 = client1_output_queue,
+      .output_queue2 = client2_output_queue,
+      .output_queue_mutex = output_queue_mutex,
+      .scheduler = 3,  // Least Service
       .task = 0,  // Read
       .next_task = 0  // Compute
     };
 
     // Worker 3
-    auto worker3_to_worker4 = std::make_shared<ReaderWriterQueue<DBRequest>>(max_query_queue_length);
     DBWorkerOptions worker3_options{
       .input_queue_state = client_queue_state,
       .input_queue_mutex = client_queue_mutex,
-      .output_queue = worker3_to_worker4,
-      .scheduler = 0,  // Round Robin
+      .output_queue1 = client1_output_queue,
+      .output_queue2 = client2_output_queue,
+      .output_queue_mutex = output_queue_mutex,
+      .scheduler = 3,  // Least Service
       .task = 0,  // Read
       .next_task = 0  // Compute
     };
 
+    // 1&3 => 2&4
+    std::vector<ClientQueueState> worker_13_24_queue_state;
+    worker_13_24_queue_state.push_back(ClientQueueState(client1_output_queue));
+    worker_13_24_queue_state.push_back(ClientQueueState(client2_output_queue));
+    auto all_worker_13_24_queue_state = std::make_shared<AllQueueState>(worker_13_24_queue_state);
+    std::shared_ptr<std::mutex> worker_13_24_queue_mutex = std::make_shared<std::mutex>();
+
     // Worker 2
-    std::vector<ClientQueueState> worker_1_2_queue_state;
-    worker_1_2_queue_state.push_back(ClientQueueState(worker1_to_worker2));
-    auto all_worker_1_2_queue_state = std::make_shared<AllQueueState>(worker_1_2_queue_state);
-    std::shared_ptr<std::mutex> worker_1_2_queue_mutex = std::make_shared<std::mutex>();
     DBWorkerOptions worker2_options{
-      .input_queue_state = all_worker_1_2_queue_state,
-      .input_queue_mutex = worker_1_2_queue_mutex,
-      .output_queue = nullptr,
-      .scheduler = 0,  // Round Robin
+      .input_queue_state = all_worker_13_24_queue_state,
+      .input_queue_mutex = worker_13_24_queue_mutex,
+      .output_queue1 = nullptr,
+      .output_queue2 = nullptr,
+      .scheduler = 3,  // Least Service
       .task = 1,  // Compute
       .next_task = -1  // None
     };
 
     // Worker 4
-    std::vector<ClientQueueState> worker_3_4_queue_state;
-    worker_3_4_queue_state.push_back(ClientQueueState(worker3_to_worker4));
-    auto all_worker_3_4_queue_state = std::make_shared<AllQueueState>(worker_3_4_queue_state);
-    std::shared_ptr<std::mutex> worker_3_4_queue_mutex = std::make_shared<std::mutex>();
     DBWorkerOptions worker4_options{
-      .input_queue_state = all_worker_3_4_queue_state,
-      .input_queue_mutex = worker_3_4_queue_mutex,
-      .output_queue = nullptr,
-      .scheduler = 0,  // Round Robin
+      .input_queue_state = all_worker_13_24_queue_state,
+      .input_queue_mutex = worker_13_24_queue_mutex,
+      .output_queue1 = nullptr,
+      .output_queue2 = nullptr,
+      .scheduler = 3,  // Least Service
       .task = 1,  // Compute
       .next_task = -1  // None
     };
@@ -148,7 +179,7 @@ int main() {
 
     // TODO: this is a hack to reduce num cores needed
     // Let clients fill queries
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     // Start database
     FairDBManager db_manager{db_size};
@@ -158,6 +189,7 @@ int main() {
     // db_manager.Stop();
     worker_threads[0].join();
     worker_threads[2].join();
+    cout << "DB Readers completed." << endl;
 
     // TODO: better method for this
     // Let the queues drain
@@ -165,6 +197,7 @@ int main() {
     db_manager.Stop();
     worker_threads[1].join();
     worker_threads[3].join();
+    cout << "DB Computers completed." << endl;
 
     stop.store(true);
     for (int i = 0; i < client_threads.size(); ++i) {

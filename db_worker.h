@@ -73,8 +73,10 @@ struct RunStats {
 struct DBWorkerOptions {
   std::shared_ptr<AllQueueState> input_queue_state;
   std::shared_ptr<std::mutex> input_queue_mutex;
+  std::shared_ptr<std::mutex> output_queue_mutex;
 
-  std::shared_ptr<ReaderWriterQueue<DBRequest>> output_queue;
+  std::shared_ptr<ReaderWriterQueue<DBRequest>> output_queue1;
+  std::shared_ptr<ReaderWriterQueue<DBRequest>> output_queue2;
 
   // 0 - RR
   // 1 - DRFQ
@@ -99,7 +101,8 @@ public:
            const shared_ptr<FairDB> db,
            DBWorkerOptions options)
       : worker_id_(worker_id), db_(db), queue_state_(options.input_queue_state), 
-        queue_mutex_(options.input_queue_mutex), output_queue_(options.output_queue),
+        queue_mutex_(options.input_queue_mutex), output_queue1_(options.output_queue1),
+        output_queue2_(options.output_queue2), output_queue_mutex_(options.output_queue_mutex),
         scheduler_(options.scheduler), task_(options.task), next_task_(options.task) {}
 
   void Run(size_t num_queries, size_t num_clients, std::atomic<bool> &stop) {
@@ -110,7 +113,7 @@ public:
 
     DBRequest req(-1, {});
     while (stats.total_reads < num_queries && !stop.load()) {
-      int queue_idx = PullRequestFromQueues(req);
+      int queue_idx = PullRequestFromQueues(req, stop);
 
       auto start = std::chrono::high_resolution_clock::now();
       const auto read = req.reads[0];
@@ -202,8 +205,10 @@ private:
 
   std::shared_ptr<AllQueueState> queue_state_;
   std::shared_ptr<std::mutex> queue_mutex_;
+  std::shared_ptr<std::mutex> output_queue_mutex_;
 
-  std::shared_ptr<ReaderWriterQueue<DBRequest>> output_queue_;
+  std::shared_ptr<ReaderWriterQueue<DBRequest>> output_queue1_;
+  std::shared_ptr<ReaderWriterQueue<DBRequest>> output_queue2_;
   int scheduler_;
   int task_;
   int next_task_;
@@ -358,7 +363,7 @@ private:
 
   // TODO: release lock earlier. Need to remove assumption that
   //       there are always backlogged requests.
-  int PullRequestFromQueues(DBRequest &request) {
+  int PullRequestFromQueues(DBRequest &request, std::atomic<bool>& stop) {
     std::lock_guard<std::mutex> lock(*queue_mutex_);
 
     // TODO: so gross, clean this up
@@ -381,7 +386,7 @@ private:
     // queue_state_->cur_queue_idx = DRFQScheduling();
 
     while (!queue_state_->client_queues[queue_state_->cur_queue_idx]
-                .queue->try_dequeue(request)) {
+                .queue->try_dequeue(request) && !stop.load()) {
       // std::this_thread::sleep_for(std::chrono::microseconds(10));
     }
     return queue_state_->cur_queue_idx;
@@ -403,10 +408,14 @@ private:
   }
 
   void PassToNextQueue(DBRequest request) {
-    if (output_queue_ == nullptr) {
+    if (output_queue1_ == nullptr && output_queue2_ == nullptr) {
       return;
     }
-    while (!output_queue_->try_enqueue(request)) {
+
+
+    std::lock_guard<std::mutex> lock(*output_queue_mutex_);
+    auto queue = request.client_id == 0 ? output_queue1_ : output_queue2_;
+    while (!queue->try_enqueue(request)) {
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
   }
