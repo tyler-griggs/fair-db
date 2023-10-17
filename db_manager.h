@@ -18,6 +18,7 @@ public:
 
   void Run(const std::shared_ptr<AllQueueState> queue_state, size_t num_threads,
            const std::vector<int> &worker_cores, int worker_queries) {
+    cout << "Running the database workload..." << endl;
     std::vector<std::thread> worker_threads;
     std::shared_ptr<std::mutex> queue_mutex = std::make_shared<std::mutex>();
 

@@ -43,8 +43,9 @@ struct AllQueueState {
 // TODO: histogram, nicer output format
 struct QueryStats {
   int queue_idx;
-  long start;  // microseconds since epoch
-  long duration;  // microseconds
+  int64_t start;  // microseconds since epoch
+  int64_t read_duration;  // microseconds
+  int64_t total_duration;  // microseconds
 };
 
 struct RunStats {
@@ -53,10 +54,41 @@ struct RunStats {
   long dummy = 0;
   vector<QueryStats> query_stats;
 
-  RunStats(size_t num_clients, size_t num_reads) {
+  RunStats(size_t num_clients, size_t num_queries) {
     read_counts = std::vector<int>(num_clients, 0);
-    query_stats.resize(num_reads);
+    query_stats.resize(num_queries);
   }
+};
+
+
+// TODO:
+// Create an options struct with these fields:
+  // input queue
+  // output queue (or null)
+  // scheduling algorithm
+  // task to perform
+  // next task (or null)
+
+struct DBWorkerOptions {
+  std::shared_ptr<AllQueueState> input_queue_state;
+  std::shared_ptr<std::mutex> input_queue_mutex;
+
+  std::shared_ptr<ReaderWriterQueue<DBRequest>> output_queue;
+
+  // 0 - RR
+  // 1 - DRFQ
+  // 2 - DRF
+  // 3 - Fair share
+  int scheduler;
+
+  // 0 - read
+  // 1 - compute
+  int task;
+
+  // -1 - none
+  // 0 - read
+  // 1 - compute
+  int next_task;
 };
 
 class DBWorker {
@@ -76,11 +108,20 @@ public:
       int queue_idx = PullRequestFromQueues(req);
 
       auto start = std::chrono::high_resolution_clock::now();
+      int64_t read_duration;
+
+      // TODO: currently assuming a single read
       for (const auto read : req.reads) {
         // cout << "read size: " << read.read_size << endl;
         // cout << "start: " << read.start_idx << endl;
         // cout << "end: " << read.start_idx + read.read_size << endl;
+
+        /* ====== READ PHASE ======= */
         db_->Read(stats.dummy, read.start_idx, read.read_size);
+        auto read_end = std::chrono::high_resolution_clock::now();
+        read_duration = std::chrono::duration_cast<std::chrono::microseconds>(read_end - start).count();
+
+        /* ====== COMPUTE PHASE ======= */
         if (read.compute_duration > 0) {
           auto compute_start = std::chrono::high_resolution_clock::now();
           auto timeout = std::chrono::milliseconds(read.compute_duration);
@@ -97,9 +138,9 @@ public:
         }
       }
       auto stop = std::chrono::high_resolution_clock::now();
-      auto duration =
-          std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-      // cout << "dur: " << duration.count() << endl;;
+      const int64_t total_duration =
+          std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+      // cout << "dur: " << total_duration.count() << endl;;
 
       auto time_since_epoch_us =
           std::chrono::duration_cast<std::chrono::microseconds>(
@@ -109,10 +150,11 @@ public:
       stats.query_stats[stats.total_reads] =
           QueryStats{.queue_idx = queue_idx,
                      .start = time_since_epoch_us,
-                     .duration = duration.count()};
+                     .read_duration = read_duration,
+                     .total_duration = total_duration};
       ++stats.read_counts[queue_idx];
       ++stats.total_reads;
-      PushResultsToQueues(queue_idx, duration.count());
+      PushResultsToQueues(queue_idx, total_duration);
     }
     DumpStats(stats, num_clients);
   }
@@ -271,13 +313,16 @@ private:
   // TODO: DWRR - give each queue quantum each round.
   // int DeficitWeightedRoundRobin(DBRequest &request) {}
 
+
+  // TODO: release lock earlier. Need to remove assumption that
+  //       there are always backlogged requests.
   int PullRequestFromQueues(DBRequest &request) {
     std::lock_guard<std::mutex> lock(*queue_mutex_);
 
     // queue_state_->cur_queue_idx = MinimumServiceScheduling();
-    // queue_state_->cur_queue_idx = RoundRobinScheduling();
+    queue_state_->cur_queue_idx = RoundRobinScheduling();
     // queue_state_->cur_queue_idx = DRFScheduling();
-    queue_state_->cur_queue_idx = DRFQScheduling();
+    // queue_state_->cur_queue_idx = DRFQScheduling();
 
     while (!queue_state_->client_queues[queue_state_->cur_queue_idx]
                 .queue->try_dequeue(request)) {
@@ -302,13 +347,13 @@ private:
   }
 
   void DumpStats(RunStats &stats, int num_clients) {
-    vector<vector<int>> per_client_durations;
+    vector<vector<int64_t>> per_client_durations;
     per_client_durations.resize(num_clients);
     for (const auto query : stats.query_stats) {
-      per_client_durations[query.queue_idx].push_back(query.duration);
+      per_client_durations[query.queue_idx].push_back(query.total_duration);
     }
 
-    vector<vector<int>> per_client_starts;
+    vector<vector<int64_t>> per_client_starts;
     per_client_starts.resize(num_clients);
     for (const auto query : stats.query_stats) {
       per_client_starts[query.queue_idx].push_back(query.start);

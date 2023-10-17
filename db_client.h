@@ -31,6 +31,9 @@ struct DBRequest {
   int client_id;
   std::vector<SingleRead> reads;
 
+  // TODO: clean this up
+  int cur_task = 0; // 0 - read, 1 - compute
+
   DBRequest(int client_id, std::vector<SingleRead> reads)
       : client_id(client_id), reads(reads) {}
 };
@@ -58,7 +61,7 @@ public:
 
         while (!request_queue_->try_enqueue(DBRequest(client_id_, req)) &&
                !stop.load()) {
-          std::this_thread::sleep_for(std::chrono::microseconds(10));
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
       }
       cout << "Client ID " << client_id_ << " completed." << endl;
@@ -82,7 +85,7 @@ public:
 
         while (!request_queue_->try_enqueue(DBRequest(client_id_, reqs)) &&
                !stop.load()) {
-          std::this_thread::sleep_for(std::chrono::microseconds(10));
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
       }
       cout << "Client ID " << client_id_ << " completed." << endl;

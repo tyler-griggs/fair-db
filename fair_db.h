@@ -8,7 +8,7 @@
 using namespace std;
 
 // Size of chunk to read into memory at once
-const std::size_t CHUNK_SIZE = 2e9; // 4B ints, 8GB
+const std::size_t CHUNK_SIZE = 2e9; // 2B ints, 4GB
 
 class FairDB {
 public:
