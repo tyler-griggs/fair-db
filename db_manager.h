@@ -14,33 +14,33 @@ public:
     database_ = std::make_shared<DiskFairDB>();
   }
 
-  void Init() { 
-    database_->Init(db_size_elements_); 
+  bool Init() {
     stop.store(false);
+    return database_->Init(db_size_elements_);
   }
 
-  std::vector<std::thread> Run(std::vector<DBWorkerOptions> worker_options, size_t num_threads,
-           const std::vector<int> &worker_cores, int worker_queries, int num_clients) {
+  void Run(std::vector<DBWorkerOptions> worker_options,
+                               size_t num_threads,
+                               const std::vector<int> &worker_cores,
+                               int run_duration_s, int num_clients) {
     cout << "Running the database workload..." << endl;
-    std::vector<std::thread> worker_threads;
 
+    std::vector<std::thread> worker_threads;
     for (int i = 0; i < num_threads; ++i) {
-      worker_threads.push_back(std::thread([this, worker_options,
-                                            worker_queries, i, num_clients] {
-        DBWorker(/*worker_id=*/i, database_, worker_options[i]).Run(worker_queries, num_clients, stop);
-      }));
+      worker_threads.push_back(
+          std::thread([this, worker_options, i, num_clients] {
+            DBWorker(/*worker_id=*/i, database_, worker_options[i])
+                .Run(num_clients, stop);
+          }));
       SetThreadAffinity(worker_threads[i], worker_cores[i]);
     }
 
-    return worker_threads;
-
-    // for (int i = 0; i < num_threads; ++i) {
-    //   worker_threads[i].join();
-    // }
-  }
-
-  void Stop() {
+    std::this_thread::sleep_for(std::chrono::seconds(run_duration_s));
+    cout << "Killing DB" << endl;
     stop.store(true);
+    for (int i = 0; i < num_threads; ++i) {
+      worker_threads[i].join();
+    }
   }
 
   size_t db_size_elements() { return db_size_elements_; }

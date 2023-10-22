@@ -13,7 +13,7 @@ const std::size_t CHUNK_SIZE = 2e9; // 2B ints, 4GB
 class FairDB {
 public:
   virtual ~FairDB() {}
-  virtual void Init(size_t db_size_elements) {}
+  virtual bool Init(size_t db_size_elements) = 0;
   virtual void Read(long &dummy, size_t start, size_t len) = 0;
   // virtual void Write(const std::vector<int>& data, int pos) = 0;
 };
@@ -21,7 +21,7 @@ public:
 // In-memory database
 class InMemoryFairDB : public FairDB {
 public:
-  void Init(size_t db_size_elements) override {
+  bool Init(size_t db_size_elements) override {
     db_ = std::make_unique<vector<int>>();
     cout << "Initializing in-memory db of size: "
          << db_size_elements * sizeof(int) / 1e9 << "GB" << endl;
@@ -30,6 +30,7 @@ public:
       (*db_)[i] = i;
     }
     cout << "Initialization complete." << endl;
+    return true;
   }
 
   void Read(long &dummy, size_t start, size_t len) override {
@@ -49,14 +50,16 @@ private:
 // Disk-based database
 class DiskFairDB : public FairDB {
 public:
-  void Init(size_t db_size_elements) override {
+  bool Init(size_t db_size_elements) override {
     const std::string filepath("/mnt/disks/fair_db/db.bin");
     read_file_ = std::ifstream(filepath, std::ios::binary);
     if (!read_file_.is_open()) {
       std::cerr << "Error opening file for reading: " << filepath << std::endl;
+      return false;
     }
     read_buffer_.resize(CHUNK_SIZE);
     cout << "Disk DB Initialization complete." << endl;
+    return true;
   }
 
   void Read(long &dummy, size_t start, size_t len) override {

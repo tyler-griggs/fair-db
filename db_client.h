@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -28,24 +29,46 @@ struct SingleRead {
 
 // A set of read requests for the database to serve.
 struct DBRequest {
+  int64_t queue_start_time; // microseconds since epoch
+  
   int client_id;
   std::vector<SingleRead> reads;
 
   // TODO: clean this up
-  int cur_task = 0; // 0 - read, 1 - compute
+  // 0 - read, 1 - compute
+  vector<int> task_order;
+  int cur_task_idx = 0;
 
   DBRequest(int client_id, std::vector<SingleRead> reads)
       : client_id(client_id), reads(reads) {}
+};
+// BClient client0(/*client_id=*/0, client0_cpu_queue, to_cpu_mutex, client0_disk_queue, 
+// to_disk_mutex, client0_completion_queue, db_size, task_order0,
+//                      client0_read_size / datatype_size, client0_compute_ms);
+
+
+struct DBClientOptions {
+  std::shared_ptr<ReaderWriterQueue<DBRequest>> to_cpu_queue;
+  std::shared_ptr<std::mutex> to_cpu_mutex;
+
+  std::shared_ptr<ReaderWriterQueue<DBRequest>> to_disk_queue;
+  std::shared_ptr<std::mutex> to_disk_mutex;
+
+  std::shared_ptr<ReaderWriterQueue<DBRequest>> completion_queue;
 };
 
 class DBClient {
 public:
   DBClient(int client_id,
-           const std::shared_ptr<ReaderWriterQueue<DBRequest>> &request_queue,
-           size_t db_size_elements, size_t read_size,
+           const DBClientOptions& options,
+           size_t db_size_elements, const vector<int>& task_order,
+           size_t read_size,
            size_t compute_duration_ms)
-      : client_id_(client_id), request_queue_(request_queue),
-        db_size_elements_(db_size_elements), read_size_(read_size),
+      : client_id_(client_id), cpu_queue_(options.to_cpu_queue), cpu_mutex_(options.to_cpu_mutex),
+        disk_queue_(options.to_disk_queue), disk_mutex_(options.to_disk_mutex),
+        completion_queue_(options.completion_queue),
+        db_size_elements_(db_size_elements), 
+        task_order_(task_order), read_size_(read_size),
         compute_duration_ms_(compute_duration_ms) {}
 
   // Run the sequential read workload.
@@ -59,10 +82,24 @@ public:
         std::vector<SingleRead> req{
             SingleRead(start_idx, read_size_, compute_duration_ms_)};
 
-        while (!request_queue_->try_enqueue(DBRequest(client_id_, req)) &&
-               !stop.load()) {
+        auto db_request = DBRequest(client_id_, req);
+        db_request.task_order = task_order_;
+        db_request.queue_start_time =  std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        auto queue = task_order_[0] == 0 ? disk_queue_ : cpu_queue_;
+        auto mutex = task_order_[0] == 0 ? disk_mutex_ : cpu_mutex_;
+        // Queue up the query.
+        mutex->lock();
+        while (!queue->try_enqueue(db_request) && !stop.load()) {
           std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
+        mutex->unlock();
+
+        // Wait for completion.
+        DBRequest request(-1, {});
+        while (!completion_queue_->try_dequeue(request) && !stop.load()) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        cout << client_id_ << " +1" << endl;
       }
       cout << "Client ID " << client_id_ << " completed." << endl;
     });
@@ -76,17 +113,17 @@ public:
          << read_size_ / 1e6 << "M elements." << endl;
     std::thread client_thread([this, &stop, num_random] {
       while (!stop.load()) {
-        std::vector<SingleRead> reqs;
-        for (int i = 0; i < num_random; ++i) {
-          int start_idx =
-              rand() % (db_size_elements_ - read_size_ / num_random);
-          reqs.push_back(SingleRead(start_idx, read_size_ / num_random));
-        }
+      //   std::vector<SingleRead> reqs;
+      //   for (int i = 0; i < num_random; ++i) {
+      //     int start_idx =
+      //         rand() % (db_size_elements_ - read_size_ / num_random);
+      //     reqs.push_back(SingleRead(start_idx, read_size_ / num_random));
+      //   }
 
-        while (!request_queue_->try_enqueue(DBRequest(client_id_, reqs)) &&
-               !stop.load()) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
+      //   while (!request_queue_->try_enqueue(DBRequest(client_id_, reqs)) &&
+      //          !stop.load()) {
+      //     std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      //   }
       }
       cout << "Client ID " << client_id_ << " completed." << endl;
     });
@@ -95,8 +132,13 @@ public:
 
 private:
   const int client_id_;
-  const std::shared_ptr<ReaderWriterQueue<DBRequest>> &request_queue_;
+  const std::shared_ptr<ReaderWriterQueue<DBRequest>> &cpu_queue_;
+  std::shared_ptr<std::mutex> cpu_mutex_;
+  const std::shared_ptr<ReaderWriterQueue<DBRequest>> &disk_queue_;
+  std::shared_ptr<std::mutex> disk_mutex_;
+  const std::shared_ptr<ReaderWriterQueue<DBRequest>> &completion_queue_;
   const size_t db_size_elements_;
+  const vector<int> &task_order_;
   const size_t read_size_;
   const size_t compute_duration_ms_;
 };
