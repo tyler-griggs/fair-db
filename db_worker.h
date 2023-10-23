@@ -216,6 +216,8 @@ private:
   // TODO: improve multi-threading. Currently multiple threads will choose
   // the same least-service queue
   int MinimumServiceScheduling(std::atomic<bool> &stop) {
+    const int memory_window_size_us = 3 * 1000 * 1000;
+
     int min_service = std::numeric_limits<int>::max();
     int min_idx = -1;
     while (!stop.load()) {
@@ -234,6 +236,14 @@ private:
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+
+    // Bound the memory to the window size.
+    int other_idx = 1-min_idx;
+    int other_service_us = queue_state_->client_queues[other_idx].service_us;
+    queue_state_->client_queues[min_idx].service_us = std::max(queue_state_->client_queues[min_idx].service_us, other_service_us - memory_window_size_us);
+
+    // roughly equivalent to SFQ: once an op starts, move the service_duration_us
+    // up to the most recent op minus some window size
     return min_idx;
   }
 
@@ -438,22 +448,17 @@ private:
 
   void PushResultsToInputQueues(int queue_idx, int service_duration_us) {
     // std::lock_guard<std::mutex> lock(*options_.input_queue_mutex);
-    // if (queue_idx == 0) {
-    //   queue_state_->client_queues[queue_idx].service_us += worker_id_ == 0 ? 
-    // } else {
-
-    // }
     queue_state_->client_queues[queue_idx].service_us += service_duration_us;
 
-    if (queue_idx == 0) {
-      // Task A: 1/3GB read, 2/3s CPU
-      queue_state_->client_queues[0].cur_disk_bw -= 1; // out of 9
-      queue_state_->client_queues[0].cur_cpu -= 4;     // out of 18
-    } else {
-      // Task B: 1GB read, 1/6s CPU
-      queue_state_->client_queues[1].cur_disk_bw -= 3; // out of 9
-      queue_state_->client_queues[1].cur_cpu -= 1;     // out of 18
-    }
+    // if (queue_idx == 0) {
+    //   // Task A: 1/3GB read, 2/3s CPU
+    //   queue_state_->client_queues[0].cur_disk_bw -= 1; // out of 9
+    //   queue_state_->client_queues[0].cur_cpu -= 4;     // out of 18
+    // } else {
+    //   // Task B: 1GB read, 1/6s CPU
+    //   queue_state_->client_queues[1].cur_disk_bw -= 3; // out of 9
+    //   queue_state_->client_queues[1].cur_cpu -= 1;     // out of 18
+    // }
   }
 
   void PassToNextQueue(DBRequest request, std::atomic<bool>& stop) {

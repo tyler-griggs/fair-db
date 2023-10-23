@@ -28,44 +28,28 @@ int main() {
   size_t db_size = 40e9; // Number of elements in the db (40B ints, 160GB)
   size_t datatype_size = sizeof(int);
 
-  int run_duration_s = 120; // Workload duration before shutdown
+  int run_duration_s = 60; // Workload duration before shutdown
 
   // Max queue length for each client.
   int max_queue_length = 16;
   int max_interop_queueing = 16;
 
-  size_t client0_read_size = 2 * 1e9;
-  int client0_compute_ms = 2 * 1000;
-    vector<int> task_order0{0,1,1,1};
+  size_t client0_read_size = 0.5 * 1e9;
+  int client0_compute_ms = 1.5 * 1000;
+  int client0_query_interval_ms = 7 * 1000;
+  // int client0_query_interval_ms = 0;
+  vector<int> task_order0{0,1,1,1};
 
   size_t client1_read_size = 0.5 * 1e9;
   int client1_compute_ms = 0.5 * 1000;
   vector<int> task_order1{0,1,1,1};
 
-  // size_t client0_read_size = 2 * 1e9; // ~950ms
-  // int client0_compute_ms = 0.81 * 1000;
-
-  // size_t client1_read_size = 0.5 * 1e9; // ~270ms
-  // int client1_compute_ms = 0.3 * 1000;
-
-  // size_t client0_read_size = 1.1 * 1e9;
-  // int client0_compute_ms = 0.0625 * 1000;
-
-  // size_t client1_read_size = 0.55 * 1e9;
-  // int client1_compute_ms = 0.75 * 1000;
-
-  // size_t client0_read_size = 1e9 / 3; // Bytes per request.  (cur ~= 1/3GB)
-  // int client0_compute_ms = 667;       // Fake compute task duration.
-
-  // size_t client1_read_size = 1e9; // Bytes per request.  (cur ~= 1GB)
-  // int client1_compute_ms = 167;   // Fake compute task duration.
-
   int num_worker_threads = 2;
-  // TODO: move this from client core
-  std::vector<int> worker_cores{3, 2, 1, 0};
+  int num_clients = 2;
 
   // Core IDs for clients and workers. Clients share a core.
-  int num_clients = 2;
+  // TODO: move this from client core
+  std::vector<int> worker_cores{3, 2, 1, 0};
   int client_core = 0;
 
 
@@ -106,6 +90,7 @@ int main() {
       .to_disk_queue = client0_disk_queue,
       .to_disk_mutex = to_disk_mutex,
       .completion_queue = client0_completion_queue,
+      .query_interval_ms = client0_query_interval_ms,
     };
     DBClient client0(/*client_id=*/0, client_options0, db_size, task_order0,
                      client0_read_size / datatype_size, client0_compute_ms);
@@ -160,8 +145,8 @@ int main() {
         .to_completion_queue0 = client0_completion_queue,
         .to_completion_queue1 = client1_completion_queue,
         .to_completion_mutex = to_completion_mutex,
-        // .scheduler = SchedulerType::PER_RESOURCE_FAIR,
-        .scheduler = SchedulerType::FIFO,
+        .scheduler = SchedulerType::PER_RESOURCE_FAIR,
+        // .scheduler = SchedulerType::FIFO,
         .task = 0,      // Read
     };
 
@@ -178,8 +163,8 @@ int main() {
         .to_completion_queue0 = client0_completion_queue,
         .to_completion_queue1 = client1_completion_queue,
         .to_completion_mutex = to_completion_mutex,
-        // .scheduler = SchedulerType::PER_RESOURCE_FAIR,
-        .scheduler = SchedulerType::FIFO,
+        .scheduler = SchedulerType::PER_RESOURCE_FAIR,
+        // .scheduler = SchedulerType::FIFO,
         .task = 1,      // Compute
     };
 

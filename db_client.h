@@ -55,6 +55,8 @@ struct DBClientOptions {
   std::shared_ptr<std::mutex> to_disk_mutex;
 
   std::shared_ptr<ReaderWriterQueue<DBRequest>> completion_queue;
+
+  int query_interval_ms = 0;
 };
 
 class DBClient {
@@ -69,7 +71,7 @@ public:
         completion_queue_(options.completion_queue),
         db_size_elements_(db_size_elements), 
         task_order_(task_order), read_size_(read_size),
-        compute_duration_ms_(compute_duration_ms) {}
+        compute_duration_ms_(compute_duration_ms), query_interval_ms_(options.query_interval_ms) {}
 
   // Run the sequential read workload.
   std::thread RunSequential(std::atomic<bool> &stop) {
@@ -100,6 +102,9 @@ public:
           std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         cout << client_id_ << " +1" << endl;
+        if (query_interval_ms_ > 0) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(query_interval_ms_));
+        }
       }
       cout << "Client ID " << client_id_ << " completed." << endl;
     });
@@ -141,5 +146,6 @@ private:
   const vector<int> &task_order_;
   const size_t read_size_;
   const size_t compute_duration_ms_;
+  const int query_interval_ms_;
 };
 #endif
