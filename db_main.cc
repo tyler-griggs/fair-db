@@ -28,17 +28,19 @@ int main() {
   size_t db_size = 40e9; // Number of elements in the db (40B ints, 160GB)
   size_t datatype_size = sizeof(int);
 
-  int run_duration_s = 30; // Workload duration before shutdown
+  int run_duration_s = 120; // Workload duration before shutdown
 
   // Max queue length for each client.
   int max_queue_length = 16;
   int max_interop_queueing = 16;
 
+  size_t client0_read_size = 2 * 1e9;
+  int client0_compute_ms = 2 * 1000;
+    vector<int> task_order0{0,1,1,1};
 
-  size_t client0_read_size = 0.5 * 1e9; // ~950ms
-  int client0_compute_ms = 0.5 * 1000;
-  size_t client1_read_size = 2 * 1e9; // ~270ms
-  int client1_compute_ms = 2 * 1000;
+  size_t client1_read_size = 0.5 * 1e9;
+  int client1_compute_ms = 0.5 * 1000;
+  vector<int> task_order1{0,1,1,1};
 
   // size_t client0_read_size = 2 * 1e9; // ~950ms
   // int client0_compute_ms = 0.81 * 1000;
@@ -98,7 +100,6 @@ int main() {
         std::make_shared<std::mutex>();
 
     // Start Client 0
-    vector<int> task_order0{0,0,1,1};
     DBClientOptions client_options0{
       .to_cpu_queue = client0_cpu_queue,
       .to_cpu_mutex = to_cpu_mutex,
@@ -114,7 +115,6 @@ int main() {
     SetThreadAffinity(client_threads[0], client_core);
 
     // Start Client 1
-    vector<int> task_order1{0,1};
     DBClientOptions client_options1{
       .to_cpu_queue = client1_cpu_queue,
       .to_cpu_mutex = to_cpu_mutex,
@@ -160,7 +160,8 @@ int main() {
         .to_completion_queue0 = client0_completion_queue,
         .to_completion_queue1 = client1_completion_queue,
         .to_completion_mutex = to_completion_mutex,
-        .scheduler = SchedulerType::PER_RESOURCE_FAIR,
+        // .scheduler = SchedulerType::PER_RESOURCE_FAIR,
+        .scheduler = SchedulerType::FIFO,
         .task = 0,      // Read
     };
 
@@ -177,7 +178,8 @@ int main() {
         .to_completion_queue0 = client0_completion_queue,
         .to_completion_queue1 = client1_completion_queue,
         .to_completion_mutex = to_completion_mutex,
-        .scheduler = SchedulerType::PER_RESOURCE_FAIR,
+        // .scheduler = SchedulerType::PER_RESOURCE_FAIR,
+        .scheduler = SchedulerType::FIFO,
         .task = 1,      // Compute
     };
 

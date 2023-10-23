@@ -107,7 +107,27 @@ class DBWorker {
 public:
   DBWorker(int worker_id, const shared_ptr<FairDB> db, DBWorkerOptions options)
       : worker_id_(worker_id), db_(db), options_(options), queue_state_(options.input_queue_state),
-        scheduler_(options.scheduler), task_(options.task) {}
+        scheduler_(options.scheduler), task_(options.task) {
+          cout << "DB worker " << worker_id_ << " using ";
+          switch (scheduler_) {
+            case SchedulerType::NONE:
+              cout << "NONE";
+              break;
+            case SchedulerType::ROUND_ROBIN:
+              cout << "ROUND_ROBIN";
+              break;
+            case SchedulerType::FIFO:
+              cout << "FIFO";
+              break;
+            case SchedulerType::DRFQ:
+              cout << "DRFQ";
+              break;
+            case SchedulerType::PER_RESOURCE_FAIR:
+              cout << "PER_RESOURCE_FAIR";
+              break;
+          }
+          cout << endl;
+        }
 
   void Run(size_t num_clients, std::atomic<bool> &stop) {
     // TODO: WRONG
