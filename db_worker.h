@@ -106,28 +106,29 @@ struct DBWorkerOptions {
 class DBWorker {
 public:
   DBWorker(int worker_id, const shared_ptr<FairDB> db, DBWorkerOptions options)
-      : worker_id_(worker_id), db_(db), options_(options), queue_state_(options.input_queue_state),
-        scheduler_(options.scheduler), task_(options.task) {
-          cout << "DB worker " << worker_id_ << " using ";
-          switch (scheduler_) {
-            case SchedulerType::NONE:
-              cout << "NONE";
-              break;
-            case SchedulerType::ROUND_ROBIN:
-              cout << "ROUND_ROBIN";
-              break;
-            case SchedulerType::FIFO:
-              cout << "FIFO";
-              break;
-            case SchedulerType::DRFQ:
-              cout << "DRFQ";
-              break;
-            case SchedulerType::PER_RESOURCE_FAIR:
-              cout << "PER_RESOURCE_FAIR";
-              break;
-          }
-          cout << endl;
-        }
+      : worker_id_(worker_id), db_(db), options_(options),
+        queue_state_(options.input_queue_state), scheduler_(options.scheduler),
+        task_(options.task) {
+    cout << "DB worker " << worker_id_ << " using ";
+    switch (scheduler_) {
+    case SchedulerType::NONE:
+      cout << "NONE";
+      break;
+    case SchedulerType::ROUND_ROBIN:
+      cout << "ROUND_ROBIN";
+      break;
+    case SchedulerType::FIFO:
+      cout << "FIFO";
+      break;
+    case SchedulerType::DRFQ:
+      cout << "DRFQ";
+      break;
+    case SchedulerType::PER_RESOURCE_FAIR:
+      cout << "PER_RESOURCE_FAIR";
+      break;
+    }
+    cout << endl;
+  }
 
   void Run(size_t num_clients, std::atomic<bool> &stop) {
     // TODO: WRONG
@@ -137,7 +138,8 @@ public:
     DBRequest req(-1, {});
     while (!stop.load()) {
       int queue_idx = PullRequestFromQueues(req, stop);
-      // cout << "Worker " << worker_id_ << " pulled req at queue idx " << queue_idx << endl;
+      // cout << "Worker " << worker_id_ << " pulled req at queue idx " <<
+      // queue_idx << endl;
       if (queue_idx == -1) {
         break;
       }
@@ -181,12 +183,11 @@ public:
               start.time_since_epoch())
               .count();
 
-      stats.query_stats.push_back(
-          QueryStats{.queue_idx = queue_idx,
-                     .client_id = req.client_id,
-                     .start = time_since_epoch_us,
-                     //  .read_duration = read_duration,
-                     .total_duration = total_duration});
+      stats.query_stats.push_back(QueryStats{.queue_idx = queue_idx,
+                                             .client_id = req.client_id,
+                                             .start = time_since_epoch_us,
+                                             //  .read_duration = read_duration,
+                                             .total_duration = total_duration});
       // ++stats.read_counts[queue_idx];
       ++stats.read_counts[req.client_id];
       ++stats.total_reads;
@@ -202,7 +203,7 @@ public:
 private:
   int worker_id_;
   const shared_ptr<FairDB> db_;
-  const DBWorkerOptions& options_;
+  const DBWorkerOptions &options_;
 
   std::shared_ptr<AllQueueState> queue_state_;
   // std::shared_ptr<std::mutex> queue_mutex_;
@@ -233,9 +234,12 @@ private:
       }
       if (min_idx != -1) {
         // Bound the memory to the window size.
-        int other_idx = 1-min_idx;
-        int other_service_us = queue_state_->client_queues[other_idx].service_us;
-        queue_state_->client_queues[min_idx].service_us = std::max(queue_state_->client_queues[min_idx].service_us, other_service_us - memory_window_size_us);
+        int other_idx = 1 - min_idx;
+        int other_service_us =
+            queue_state_->client_queues[other_idx].service_us;
+        queue_state_->client_queues[min_idx].service_us =
+            std::max(queue_state_->client_queues[min_idx].service_us,
+                     other_service_us - memory_window_size_us);
         break;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -371,8 +375,7 @@ private:
   int RoundRobinScheduling(std::atomic<bool> &stop) {
     int idx = queue_state_->cur_queue_idx;
     while (!stop.load()) {
-      idx = (idx + 1) %
-           queue_state_->client_queues.size();
+      idx = (idx + 1) % queue_state_->client_queues.size();
       if (queue_state_->client_queues[idx].queue->peek() != nullptr) {
         return idx;
       }
@@ -412,21 +415,22 @@ private:
 
     int idx = -1;
     switch (scheduler_) {
-      case SchedulerType::NONE:
-        cout << "No scheduler specified for worker " << worker_id_ << ". Exiting." << endl;
-        return -1;
-      case SchedulerType::ROUND_ROBIN:
-        idx = RoundRobinScheduling(stop);
-        break;
-      case SchedulerType::FIFO:
-        idx = FIFOScheduling(stop);
-        break;
-      case SchedulerType::DRFQ:
-        idx = DRFQScheduling();
-        break;
-      case SchedulerType::PER_RESOURCE_FAIR:
-        idx = MinimumServiceScheduling(stop);
-        break;
+    case SchedulerType::NONE:
+      cout << "No scheduler specified for worker " << worker_id_ << ". Exiting."
+           << endl;
+      return -1;
+    case SchedulerType::ROUND_ROBIN:
+      idx = RoundRobinScheduling(stop);
+      break;
+    case SchedulerType::FIFO:
+      idx = FIFOScheduling(stop);
+      break;
+    case SchedulerType::DRFQ:
+      idx = DRFQScheduling();
+      break;
+    case SchedulerType::PER_RESOURCE_FAIR:
+      idx = MinimumServiceScheduling(stop);
+      break;
     }
     if (idx == -1) {
       return -1;
@@ -435,8 +439,8 @@ private:
     // queue_state_->cur_queue_idx = MinimumServiceScheduling();
     // queue_state_->cur_queue_idx = RoundRobinScheduling();
     // queue_state_->cur_queue_idx = DRFScheduling();
-    while (!queue_state_->client_queues[idx]
-                .queue->try_dequeue(request) && !stop.load()) {
+    while (!queue_state_->client_queues[idx].queue->try_dequeue(request) &&
+           !stop.load()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     return queue_state_->cur_queue_idx;
@@ -457,21 +461,27 @@ private:
     // }
   }
 
-  void PassToNextQueue(DBRequest request, std::atomic<bool>& stop) {
+  void PassToNextQueue(DBRequest request, std::atomic<bool> &stop) {
     request.cur_task_idx++;
     std::shared_ptr<ReaderWriterQueue<DBRequest>> queue;
     std::shared_ptr<std::mutex> mutex;
     if (request.cur_task_idx >= request.task_order.size()) {
-      queue = request.client_id == 0 ? options_.to_completion_queue0 : options_.to_completion_queue1;
+      queue = request.client_id == 0 ? options_.to_completion_queue0
+                                     : options_.to_completion_queue1;
       mutex = options_.to_completion_mutex;
     } else if (request.task_order[request.cur_task_idx] == 0) {
-      queue = request.client_id == 0 ? options_.to_disk_queue0 : options_.to_disk_queue1;
+      queue = request.client_id == 0 ? options_.to_disk_queue0
+                                     : options_.to_disk_queue1;
       mutex = options_.to_disk_mutex;
     } else {
-      queue = request.client_id == 0 ? options_.to_cpu_queue0 : options_.to_cpu_queue1;
+      queue = request.client_id == 0 ? options_.to_cpu_queue0
+                                     : options_.to_cpu_queue1;
       mutex = options_.to_cpu_mutex;
     }
-    request.queue_start_time =  std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    request.queue_start_time =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count();
     std::lock_guard<std::mutex> lock(*mutex);
     while (!queue->try_enqueue(request) && !stop.load()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(10));

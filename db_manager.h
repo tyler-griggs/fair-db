@@ -19,10 +19,9 @@ public:
     return database_->Init(db_size_elements_);
   }
 
-  void Run(std::vector<DBWorkerOptions> worker_options,
-                               size_t num_threads,
-                               const std::vector<int> &worker_cores,
-                               int run_duration_s, int num_clients) {
+  void Run(std::vector<DBWorkerOptions> worker_options, size_t num_threads,
+           const std::vector<int> &worker_cores, int run_duration_s,
+           int num_clients) {
     cout << "Running the database workload..." << endl;
 
     std::vector<std::thread> worker_threads;
