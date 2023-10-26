@@ -216,7 +216,7 @@ private:
   // TODO: improve multi-threading. Currently multiple threads will choose
   // the same least-service queue
   int MinimumServiceScheduling(std::atomic<bool> &stop) {
-    const int memory_window_size_us = 3 * 1000 * 1000;
+    const int memory_window_size_us = 1.5 * 1000 * 1000;
 
     int min_service = std::numeric_limits<int>::max();
     int min_idx = -1;
@@ -232,18 +232,14 @@ private:
         }
       }
       if (min_idx != -1) {
+        // Bound the memory to the window size.
+        int other_idx = 1-min_idx;
+        int other_service_us = queue_state_->client_queues[other_idx].service_us;
+        queue_state_->client_queues[min_idx].service_us = std::max(queue_state_->client_queues[min_idx].service_us, other_service_us - memory_window_size_us);
         break;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-
-    // Bound the memory to the window size.
-    int other_idx = 1-min_idx;
-    int other_service_us = queue_state_->client_queues[other_idx].service_us;
-    queue_state_->client_queues[min_idx].service_us = std::max(queue_state_->client_queues[min_idx].service_us, other_service_us - memory_window_size_us);
-
-    // roughly equivalent to SFQ: once an op starts, move the service_duration_us
-    // up to the most recent op minus some window size
     return min_idx;
   }
 
