@@ -7,6 +7,33 @@
 #include <pthread.h>
 #include <sched.h>
 
+class Logger {
+public:
+  template <typename... Args> static void log(Args... args) {
+    printTime();
+    print(args...);
+    std::cout << std::endl;
+  }
+
+private:
+  static void printTime() {
+    auto now = std::chrono::system_clock::now();
+    auto now_time_t = std::chrono::system_clock::to_time_t(now);
+    std::tm *localTime = std::localtime(&now_time_t);
+    std::cout << std::put_time(localTime, "[%Y-%m-%d %H:%M:%S] ");
+  }
+
+  template <typename First, typename... Rest>
+  static void print(First first, Rest... rest) {
+    std::cout << first;
+    print(rest...);
+  }
+
+  static void print() {
+    // Base case: do nothing
+  }
+};
+
 void WriteToLog(std::string output) {
   std::time_t currentTime =
       std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());

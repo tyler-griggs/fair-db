@@ -22,7 +22,7 @@ public:
   void Run(std::vector<DBWorkerOptions> worker_options, size_t num_threads,
            const std::vector<int> &worker_cores, int run_duration_s,
            int num_clients) {
-    cout << "Running the database workload..." << endl;
+    Logger::log("Running database workload...");
 
     std::vector<std::thread> worker_threads;
     for (int i = 0; i < num_threads; ++i) {
@@ -38,7 +38,7 @@ public:
     }
 
     std::this_thread::sleep_for(std::chrono::seconds(run_duration_s));
-    cout << "Killing DB" << endl;
+    Logger::log("Killing DB.");
     stop.store(true);
     for (int i = 0; i < num_threads; ++i) {
       worker_threads[i].join();

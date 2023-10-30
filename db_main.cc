@@ -58,7 +58,7 @@ int main() {
 
   // Only one worker per thread (for now).
   if (worker_cores.size() < num_worker_threads) {
-    cout << "Too many worker threads for given cores" << endl;
+    Logger::log("Too many worker threads for given cores");
     return 0;
   }
 
@@ -177,14 +177,14 @@ int main() {
                                                 worker1_options};
 
     if (num_worker_threads != worker_options.size()) {
-      cout << "Incorrect worker thread and options configuration";
+      Logger::log("Incorrect worker thread and options configuration");
       return 0;
     }
 
     // Start database
     FairDBManager db_manager{db_size};
     if (!db_manager.Init()) {
-      cout << "DB Init failed." << endl;
+      Logger::log("DB initialization failed.");
       return 1;
     }
     db_manager.Run(worker_options, num_worker_threads, worker_cores,

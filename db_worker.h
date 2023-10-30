@@ -72,11 +72,11 @@ public:
   bool Init() {
     scheduler_ = GetScheduler(options_.scheduler_type);
     if (scheduler_ == nullptr) {
-      cout << "Invalid or missing scheduler. Exiting.";
+      Logger::log("Invalild or missing scheduler. Exiting.");
       return false;
     }
-    cout << "DB worker " << worker_id_ << " using scheduler type: "
-         << SchedulerToString(options_.scheduler_type) << endl;
+    Logger::log("DB worker ", worker_id_, " using scheduler type: ",
+                SchedulerToString(options_.scheduler_type));
     return true;
   }
 
@@ -224,8 +224,8 @@ private:
       const auto durs = per_client_durations[i];
       int duration_avg =
           std::accumulate(durs.begin(), durs.end(), 0) / durs.size();
-      cout << "Avg: " << i << " - " << duration_avg << " (dummy=" << stats.dummy
-           << ")" << endl;
+      Logger::log("Worker ", worker_id_, ": Client ", i, " avg: ", duration_avg,
+                  "(dummy=", stats.dummy, ")");
     }
 
     std::ofstream output_file("results/results_" + std::to_string(worker_id_) +

@@ -23,13 +23,12 @@ class InMemoryFairDB : public FairDB {
 public:
   bool Init(size_t db_size_elements) override {
     db_ = std::make_unique<vector<int>>();
-    cout << "Initializing in-memory db of size: "
-         << db_size_elements * sizeof(int) / 1e9 << "GB" << endl;
+    Logger::log("Initializing in-memory DB of size: ", db_size_elements * sizeof(int) / 1e9, "GB.");
     db_->resize(db_size_elements);
     for (int i = 0; i < db_->size(); ++i) {
       (*db_)[i] = i;
     }
-    cout << "Initialization complete." << endl;
+    Logger::log("Initialization complete.");
     return true;
   }
 
@@ -58,7 +57,7 @@ public:
       return false;
     }
     read_buffer_.resize(CHUNK_SIZE);
-    cout << "Disk DB Initialization complete." << endl;
+    Logger::log("Disk DB initialization complete.");
     return true;
   }
 

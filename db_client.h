@@ -47,8 +47,8 @@ public:
   // Run the sequential read workload.
   std::thread RunSequential(std::atomic<bool> &stop) {
     srand(time(0));
-    cout << "Client ID " << client_id_ << " running Sequential workload of "
-         << read_size_ / 1e6 << "M elements." << endl;
+    Logger::log("Client ID ", client_id_, " running Sequential workload of ",
+                read_size_ / 1e6, "M elements.");
     std::thread client_thread([this, &stop] {
       int outstanding = 0;
       while (!stop.load()) {
@@ -78,7 +78,7 @@ public:
           outstanding--;
         }
       }
-      cout << "Client ID " << client_id_ << " completed." << endl;
+      Logger::log("Client ID ", client_id_, " completed.");
     });
     return client_thread;
   }
@@ -86,8 +86,8 @@ public:
   // Run the random read workload.
   std::thread RunRandom(std::atomic<bool> &stop, int num_random) {
     srand(time(0));
-    cout << "Client ID " << client_id_ << " running Random workload  of "
-         << read_size_ / 1e6 << "M elements." << endl;
+    Logger::log("Client ID ", client_id_, " running Random workload of ",
+                read_size_ / 1e6, "M elements.");
     std::thread client_thread([this, &stop, num_random] {
       while (!stop.load()) {
         //   std::vector<SingleRead> reqs;
@@ -102,7 +102,7 @@ public:
         //     std::this_thread::sleep_for(std::chrono::milliseconds(10));
         //   }
       }
-      cout << "Client ID " << client_id_ << " completed." << endl;
+      Logger::log("Client ID ", client_id_, " completed.");
     });
     return client_thread;
   }
