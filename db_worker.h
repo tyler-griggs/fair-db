@@ -61,14 +61,6 @@ struct RunStats {
   }
 };
 
-// TODO:
-// Create an options struct with these fields:
-// input queue
-// output queue (or null)
-// scheduling algorithm
-// task to perform
-// next task (or null)
-
 enum class SchedulerType {
   NONE = 0,
   ROUND_ROBIN = 1,
@@ -109,7 +101,7 @@ public:
       : worker_id_(worker_id), db_(db), options_(options),
         queue_state_(options.input_queue_state), scheduler_(options.scheduler),
         task_(options.task) {
-    cout << "DB worker " << worker_id_ << " using ";
+    cout << "DB worker " << worker_id_ << " using scheduler type: ";
     switch (scheduler_) {
     case SchedulerType::NONE:
       cout << "NONE";
@@ -131,15 +123,11 @@ public:
   }
 
   void Run(size_t num_clients, std::atomic<bool> &stop) {
-    // TODO: WRONG
-    // size_t num_clients = queue_state_->client_queues.size();
     auto stats = RunStats(num_clients);
 
     DBRequest req(-1, {});
     while (!stop.load()) {
       int queue_idx = PullRequestFromQueues(req, stop);
-      // cout << "Worker " << worker_id_ << " pulled req at queue idx " <<
-      // queue_idx << endl;
       if (queue_idx == -1) {
         break;
       }
@@ -206,18 +194,13 @@ private:
   const DBWorkerOptions &options_;
 
   std::shared_ptr<AllQueueState> queue_state_;
-  // std::shared_ptr<std::mutex> queue_mutex_;
-  // std::shared_ptr<std::mutex> output_queue_mutex_;
-
-  // std::shared_ptr<ReaderWriterQueue<DBRequest>> output_queue1_;
-  // std::shared_ptr<ReaderWriterQueue<DBRequest>> output_queue2_;
   SchedulerType scheduler_;
   int task_;
 
   // TODO: improve multi-threading. Currently multiple threads will choose
   // the same least-service queue
   int MinimumServiceScheduling(std::atomic<bool> &stop) {
-    const int memory_window_size_us = 1.5 * 1000 * 1000;
+    const int memory_window_size_us = 120 * 1000 * 1000;
 
     int min_service = std::numeric_limits<int>::max();
     int min_idx = -1;
@@ -384,7 +367,6 @@ private:
     return -1;
   }
 
-  // TODO: Implement. May need some timestamp?
   int FIFOScheduling(std::atomic<bool> &stop) {
     int64_t min_start_time = std::numeric_limits<int64_t>::max();
     int min_idx = -1;
@@ -411,6 +393,7 @@ private:
   // TODO: release lock earlier. Need to remove assumption that
   //       there are always backlogged requests.
   int PullRequestFromQueues(DBRequest &request, std::atomic<bool> &stop) {
+    // TODO: add this back in with parallel workers
     // std::lock_guard<std::mutex> lock(*options_.input_queue_mutex);
 
     int idx = -1;
@@ -480,7 +463,7 @@ private:
     }
     request.queue_start_time =
         std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
+            std::chrono::high_resolution_clock::now().time_since_epoch())
             .count();
     std::lock_guard<std::mutex> lock(*mutex);
     while (!queue->try_enqueue(request) && !stop.load()) {

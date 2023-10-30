@@ -42,10 +42,6 @@ struct DBRequest {
   DBRequest(int client_id, std::vector<SingleRead> reads)
       : client_id(client_id), reads(reads) {}
 };
-// BClient client0(/*client_id=*/0, client0_cpu_queue, to_cpu_mutex,
-// client0_disk_queue, to_disk_mutex, client0_completion_queue, db_size,
-// task_order0,
-//                      client0_read_size / datatype_size, client0_compute_ms);
 
 struct DBClientOptions {
   std::shared_ptr<ReaderWriterQueue<DBRequest>> to_cpu_queue;
@@ -57,6 +53,7 @@ struct DBClientOptions {
   std::shared_ptr<ReaderWriterQueue<DBRequest>> completion_queue;
 
   int query_interval_ms = 0;
+  int max_outstanding;
 };
 
 class DBClient {
@@ -70,7 +67,8 @@ public:
         completion_queue_(options.completion_queue),
         db_size_elements_(db_size_elements), task_order_(task_order),
         read_size_(read_size), compute_duration_ms_(compute_duration_ms),
-        query_interval_ms_(options.query_interval_ms) {}
+        query_interval_ms_(options.query_interval_ms),
+        max_outstanding_(options.max_outstanding) {}
 
   // Run the sequential read workload.
   std::thread RunSequential(std::atomic<bool> &stop) {
@@ -78,35 +76,32 @@ public:
     cout << "Client ID " << client_id_ << " running Sequential workload of "
          << read_size_ / 1e6 << "M elements." << endl;
     std::thread client_thread([this, &stop] {
+      int outstanding = 0;
       while (!stop.load()) {
-        int start_idx = rand() % (db_size_elements_ - read_size_);
-        std::vector<SingleRead> req{
-            SingleRead(start_idx, read_size_, compute_duration_ms_)};
+        if (outstanding < max_outstanding_) {
+          DBRequest db_request = GetSequentialRequest();
+          auto queue = task_order_[0] == 0 ? disk_queue_ : cpu_queue_;
+          auto mutex = task_order_[0] == 0 ? disk_mutex_ : cpu_mutex_;
 
-        auto db_request = DBRequest(client_id_, req);
-        db_request.task_order = task_order_;
-        db_request.queue_start_time =
-            std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now().time_since_epoch())
-                .count();
-        auto queue = task_order_[0] == 0 ? disk_queue_ : cpu_queue_;
-        auto mutex = task_order_[0] == 0 ? disk_mutex_ : cpu_mutex_;
-        // Queue up the query.
-        mutex->lock();
-        while (!queue->try_enqueue(db_request) && !stop.load()) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-        mutex->unlock();
-
-        // Wait for completion.
-        DBRequest request(-1, {});
-        while (!completion_queue_->try_dequeue(request) && !stop.load()) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-        cout << client_id_ << " +1" << endl;
-        if (query_interval_ms_ > 0) {
-          std::this_thread::sleep_for(
-              std::chrono::milliseconds(query_interval_ms_));
+          // Queue up a query.
+          mutex->lock();
+          while (!queue->try_enqueue(db_request) && !stop.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+          }
+          mutex->unlock();
+          outstanding++;
+          // For periodic workloads.
+          if (query_interval_ms_ > 0) {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(query_interval_ms_));
+          }
+        } else {
+          // Wait for a completion.
+          DBRequest request(-1, {});
+          while (!completion_queue_->try_dequeue(request) && !stop.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+          }
+          outstanding--;
         }
       }
       cout << "Client ID " << client_id_ << " completed." << endl;
@@ -150,5 +145,20 @@ private:
   const size_t read_size_;
   const size_t compute_duration_ms_;
   const int query_interval_ms_;
+  const int max_outstanding_;
+
+  DBRequest GetSequentialRequest() {
+    int start_idx = rand() % (db_size_elements_ - read_size_);
+    std::vector<SingleRead> req{
+        SingleRead(start_idx, read_size_, compute_duration_ms_)};
+
+    auto db_request = DBRequest(client_id_, req);
+    db_request.task_order = task_order_;
+    db_request.queue_start_time =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::high_resolution_clock::now().time_since_epoch())
+            .count();
+    return db_request;
+  }
 };
 #endif
