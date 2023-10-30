@@ -26,11 +26,14 @@ public:
 
     std::vector<std::thread> worker_threads;
     for (int i = 0; i < num_threads; ++i) {
-      worker_threads.push_back(
-          std::thread([this, worker_options, i, num_clients] {
-            DBWorker(/*worker_id=*/i, database_, worker_options[i])
-                .Run(num_clients, stop);
-          }));
+      worker_threads.push_back(std::thread([this, worker_options, i,
+                                            num_clients] {
+        auto worker = DBWorker(/*worker_id=*/i, database_, worker_options[i]);
+        if (!worker.Init()) {
+          return;
+        }
+        worker.Run(num_clients, stop);
+      }));
       SetThreadAffinity(worker_threads[i], worker_cores[i]);
     }
 

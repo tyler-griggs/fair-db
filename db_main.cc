@@ -148,9 +148,9 @@ int main() {
         .to_completion_queue0 = client0_completion_queue,
         .to_completion_queue1 = client1_completion_queue,
         .to_completion_mutex = to_completion_mutex,
-        .scheduler = SchedulerType::PER_RESOURCE_FAIR,
-        // .scheduler = SchedulerType::FIFO,
-        // .scheduler = SchedulerType::ROUND_ROBIN,
+        .scheduler_type = SchedulerType::PER_RESOURCE_FAIR,
+        // .scheduler_type = SchedulerType::FIFO,
+        // .scheduler_type = SchedulerType::ROUND_ROBIN,
         .task = 0, // Read
     };
 
@@ -167,9 +167,9 @@ int main() {
         .to_completion_queue0 = client0_completion_queue,
         .to_completion_queue1 = client1_completion_queue,
         .to_completion_mutex = to_completion_mutex,
-        .scheduler = SchedulerType::PER_RESOURCE_FAIR,
-        // .scheduler = SchedulerType::FIFO,
-        // .scheduler = SchedulerType::ROUND_ROBIN,
+        .scheduler_type = SchedulerType::PER_RESOURCE_FAIR,
+        // .scheduler_type = SchedulerType::FIFO,
+        // .scheduler_type = SchedulerType::ROUND_ROBIN,
         .task = 1, // Compute
     };
 

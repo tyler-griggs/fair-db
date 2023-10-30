@@ -8,40 +8,14 @@
 #include <vector>
 
 #include "atomicops.h"
+#include "common.h"
 #include "readerwriterqueue.h"
+#include "utils.h"
 
 using namespace moodycamel;
 using namespace std;
 
 // TODO: Add internal metric state
-
-// A single read request for the database to serve.
-// TODO: Allow clients to make more flexible queries.
-struct SingleRead {
-  size_t start_idx;
-  size_t read_size;
-  size_t compute_duration = 0;
-
-  SingleRead(size_t start_idx, size_t read_size, size_t compute_duration = 0)
-      : start_idx(start_idx), read_size(read_size),
-        compute_duration(compute_duration) {}
-};
-
-// A set of read requests for the database to serve.
-struct DBRequest {
-  int64_t queue_start_time; // microseconds since epoch
-
-  int client_id;
-  std::vector<SingleRead> reads;
-
-  // TODO: clean this up
-  // 0 - read, 1 - compute
-  vector<int> task_order;
-  int cur_task_idx = 0;
-
-  DBRequest(int client_id, std::vector<SingleRead> reads)
-      : client_id(client_id), reads(reads) {}
-};
 
 struct DBClientOptions {
   std::shared_ptr<ReaderWriterQueue<DBRequest>> to_cpu_queue;
