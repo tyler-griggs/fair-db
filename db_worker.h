@@ -72,7 +72,7 @@ public:
   bool Init() {
     scheduler_ = GetScheduler(options_.scheduler_type);
     if (scheduler_ == nullptr) {
-      Logger::log("Invalild or missing scheduler. Exiting.");
+      Logger::log("Invalid or missing scheduler. Exiting.");
       return false;
     }
     Logger::log("DB worker ", worker_id_, " using scheduler type: ",
@@ -149,7 +149,7 @@ public:
 private:
   int worker_id_;
   const shared_ptr<FairDB> db_;
-  const DBWorkerOptions &options_;
+  DBWorkerOptions options_;
 
   std::shared_ptr<AllQueueState> queue_state_;
   std::unique_ptr<TaskScheduler> scheduler_;
@@ -158,8 +158,7 @@ private:
   // TODO: release lock earlier. Need to remove assumption that
   //       there are always backlogged requests.
   int PullRequestFromQueues(DBRequest &request, std::atomic<bool> &stop) {
-    // TODO: add this back in with parallel workers
-    // std::lock_guard<std::mutex> lock(*options_.input_queue_mutex);
+    std::lock_guard<std::mutex> lock(*options_.input_queue_mutex);
 
     int idx = scheduler_->GetNextQueueIdx(queue_state_, stop);
     if (idx == -1) {
@@ -174,7 +173,7 @@ private:
   }
 
   void PushResultsToInputQueues(int queue_idx, int service_duration_us) {
-    // std::lock_guard<std::mutex> lock(*options_.input_queue_mutex);
+    std::lock_guard<std::mutex> lock(*options_.input_queue_mutex);
     queue_state_->client_queues[queue_idx].service_us += service_duration_us;
   }
 

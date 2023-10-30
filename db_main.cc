@@ -14,17 +14,20 @@
 using namespace std;
 
 // TODOs:
-// create a make file
+// Remove assumption of 2 clients, generalize
+// Use enum for "task" types instead of 0,1 
 // restructure db - move more logic to manager as single entity that knows all
 //      options
-// profile how long queue logic is taking - what's time between completing op
-//      and starting next one?
-// per-client queue max between pipeline steps (creates synchrony from async)
+// Restructure queues and mutexes: should create a single object for all queues
+//      of a given resource + the mutexes and other state 
 // clean up scripts: 1) per-client timeseries, 2) per-worker timeseries
 //                   3) handle ops that were started by readers but not finished
 //                   by computers
-// add util method for logging and add timestamps
-// separate logs for each worker, then merge them
+// make better use of option structs
+// workers log to different streams, merge them 
+// update makefile to recompile when headers are changed
+// Add queue in front
+ 
 
 int main() {
   srand(time(0));
@@ -49,14 +52,14 @@ int main() {
   int client1_query_interval_ms = .2 * 1000;
   vector<int> task_order1{0, 1};
 
-  int num_worker_threads = 2;
+  int num_worker_threads = 3;
   int num_clients = 2;
 
   // Core IDs for clients and workers. Clients share a core.
   std::vector<int> worker_cores{3, 2, 1};
   int client_core = 0;
 
-  // Only one worker per thread (for now).
+  // Only one worker per core.
   if (worker_cores.size() < num_worker_threads) {
     Logger::log("Too many worker threads for given cores");
     return 0;
@@ -130,15 +133,15 @@ int main() {
 
     std::shared_ptr<std::mutex> to_completion_mutex =
         std::make_shared<std::mutex>();
-    std::shared_ptr<std::mutex> disk_input_mutex =
+    std::shared_ptr<std::mutex> from_disk_mutex =
         std::make_shared<std::mutex>();
-    std::shared_ptr<std::mutex> cpu_input_mutex =
+    std::shared_ptr<std::mutex> from_cpu_mutex =
         std::make_shared<std::mutex>();
 
     // Worker 0 - Disk Read
     DBWorkerOptions worker0_options{
         .input_queue_state = all_to_disk_queue_state,
-        .input_queue_mutex = disk_input_mutex,
+        .input_queue_mutex = from_disk_mutex,
         .to_cpu_queue0 = client0_cpu_queue,
         .to_cpu_queue1 = client1_cpu_queue,
         .to_cpu_mutex = to_cpu_mutex,
@@ -157,7 +160,26 @@ int main() {
     // Worker 1 - CPU
     DBWorkerOptions worker1_options{
         .input_queue_state = all_to_cpu_queue_state,
-        .input_queue_mutex = cpu_input_mutex,
+        .input_queue_mutex = from_cpu_mutex,
+        .to_cpu_queue0 = client0_cpu_queue,
+        .to_cpu_queue1 = client1_cpu_queue,
+        .to_cpu_mutex = to_cpu_mutex,
+        .to_disk_queue0 = client0_disk_queue,
+        .to_disk_queue1 = client1_disk_queue,
+        .to_disk_mutex = to_disk_mutex,
+        .to_completion_queue0 = client0_completion_queue,
+        .to_completion_queue1 = client1_completion_queue,
+        .to_completion_mutex = to_completion_mutex,
+        .scheduler_type = SchedulerType::PER_RESOURCE_FAIR,
+        // .scheduler_type = SchedulerType::FIFO,
+        // .scheduler_type = SchedulerType::ROUND_ROBIN,
+        .task = 1, // Compute
+    };
+
+    // Worker 2 - CPU
+    DBWorkerOptions worker2_options{
+        .input_queue_state = all_to_cpu_queue_state,
+        .input_queue_mutex = from_cpu_mutex,
         .to_cpu_queue0 = client0_cpu_queue,
         .to_cpu_queue1 = client1_cpu_queue,
         .to_cpu_mutex = to_cpu_mutex,
@@ -174,7 +196,8 @@ int main() {
     };
 
     std::vector<DBWorkerOptions> worker_options{worker0_options,
-                                                worker1_options};
+                                                worker1_options,
+                                                worker2_options};
 
     if (num_worker_threads != worker_options.size()) {
       Logger::log("Incorrect worker thread and options configuration");
