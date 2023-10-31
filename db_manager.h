@@ -15,7 +15,7 @@ public:
   }
 
   bool Init() {
-    stop.store(false);
+    stop_.store(false);
     return database_->Init(db_size_elements_);
   }
 
@@ -30,27 +30,26 @@ public:
                                             num_clients] {
         auto worker = DBWorker(/*worker_id=*/i, database_, worker_options[i]);
         if (!worker.Init()) {
+          Logger::log("Worker ", i, " failed to initialize.");
           return;
         }
-        worker.Run(num_clients, stop);
+        worker.Run(num_clients, stop_);
       }));
       SetThreadAffinity(worker_threads[i], worker_cores[i]);
     }
 
     std::this_thread::sleep_for(std::chrono::seconds(run_duration_s));
-    Logger::log("Killing DB.");
-    stop.store(true);
+    Logger::log("Stopping the database.");
+    stop_.store(true);
     for (int i = 0; i < num_threads; ++i) {
       worker_threads[i].join();
     }
   }
 
-  size_t db_size_elements() { return db_size_elements_; }
-
 private:
   const size_t db_size_elements_;
   std::shared_ptr<FairDB> database_;
-  std::atomic<bool> stop;
+  std::atomic<bool> stop_; // Used to stop worker threads.
 };
 
 #endif

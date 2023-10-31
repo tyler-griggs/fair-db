@@ -1,0 +1,11 @@
+* Remove assumption of 2 clients in codebase
+* Move logic out of main into the manager. Main should just be parameters
+  and manager should be responsible for setting up the db
+* Restructure how queues and mutexes are managed. Create a single object
+  for all queues and state of a given resource
+* Clean up analysis scripts. Create 1) per-client timeseries, 2) per-
+  worker timeseries
+* Workers should log to different streams, merge them for display
+* Update makefile to recompile when headers are changed
+* Add queue in front of system
+* Collect stats in more efficient data structure

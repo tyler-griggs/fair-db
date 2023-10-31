@@ -7,8 +7,8 @@
 
 using namespace std;
 
-// Size of chunk to read into memory at once
-const std::size_t CHUNK_SIZE = 2e9; // 2B ints, 4GB
+// Size of chunk to read from disk into memory at once.
+const std::size_t CHUNK_SIZE_ELEMENTS = 2e9; // 2B ints, 4GB
 
 class FairDB {
 public:
@@ -23,7 +23,8 @@ class InMemoryFairDB : public FairDB {
 public:
   bool Init(size_t db_size_elements) override {
     db_ = std::make_unique<vector<int>>();
-    Logger::log("Initializing in-memory DB of size: ", db_size_elements * sizeof(int) / 1e9, "GB.");
+    Logger::log("Initializing in-memory DB of size: ",
+                db_size_elements * sizeof(int) / 1e9, "GB.");
     db_->resize(db_size_elements);
     for (int i = 0; i < db_->size(); ++i) {
       (*db_)[i] = i;
@@ -56,7 +57,7 @@ public:
       std::cerr << "Error opening file for reading: " << filepath << std::endl;
       return false;
     }
-    read_buffer_.resize(CHUNK_SIZE);
+    read_buffer_.resize(CHUNK_SIZE_ELEMENTS);
     Logger::log("Disk DB initialization complete.");
     return true;
   }
@@ -64,8 +65,9 @@ public:
   void Read(long &dummy, size_t start, size_t len) override {
     read_file_.seekg(start * sizeof(int), std::ios::beg);
 
-    for (size_t i = 0; i < len; i += CHUNK_SIZE) {
-      std::size_t currentChunkSize = std::min(CHUNK_SIZE, len - i * CHUNK_SIZE);
+    for (size_t i = 0; i < len; i += CHUNK_SIZE_ELEMENTS) {
+      std::size_t currentChunkSize =
+          std::min(CHUNK_SIZE_ELEMENTS, len - i * CHUNK_SIZE_ELEMENTS);
       read_file_.read(reinterpret_cast<char *>(&read_buffer_[0]),
                       currentChunkSize * sizeof(int));
       for (size_t j = 0; j < currentChunkSize; ++j) {

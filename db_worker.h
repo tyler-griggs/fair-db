@@ -18,12 +18,10 @@
 
 using namespace std;
 
-// TODO: histogram, nicer output format
 struct QueryStats {
   int queue_idx;
   int client_id;
-  int64_t start; // microseconds since epoch
-  // int64_t read_duration;  // microseconds
+  int64_t start;          // microseconds since epoch
   int64_t total_duration; // microseconds
 };
 
@@ -31,7 +29,7 @@ struct RunStats {
   vector<int> read_counts;
   int total_reads = 0;
   long dummy = 0;
-  // TODO: this is dynamically updated in size
+  // TODO: This is inefficient and dynamically updated in size.
   vector<QueryStats> query_stats;
 
   RunStats(size_t num_clients) {
@@ -40,27 +38,27 @@ struct RunStats {
 };
 
 struct DBWorkerOptions {
+  // State of the queues that push to this worker.
   std::shared_ptr<AllQueueState> input_queue_state;
-  std::shared_ptr<std::mutex> input_queue_mutex;
 
+  // Per-tenant queues to CPU worker(s).
   std::shared_ptr<ReaderWriterQueue<DBRequest>> to_cpu_queue0;
   std::shared_ptr<ReaderWriterQueue<DBRequest>> to_cpu_queue1;
   std::shared_ptr<std::mutex> to_cpu_mutex;
 
+  // Per-tenant queues to Disk worker(s).
   std::shared_ptr<ReaderWriterQueue<DBRequest>> to_disk_queue0;
   std::shared_ptr<ReaderWriterQueue<DBRequest>> to_disk_queue1;
   std::shared_ptr<std::mutex> to_disk_mutex;
 
+  // Per-tenant queues for completed queries.
   std::shared_ptr<ReaderWriterQueue<DBRequest>> to_completion_queue0;
   std::shared_ptr<ReaderWriterQueue<DBRequest>> to_completion_queue1;
   std::shared_ptr<std::mutex> to_completion_mutex;
 
   SchedulerType scheduler_type;
 
-  // 0 - read
-  // 1 - compute
-  // 2 - read+compute
-  int task;
+  TaskType task;
 };
 
 class DBWorker {
@@ -81,26 +79,25 @@ public:
   }
 
   void Run(size_t num_clients, std::atomic<bool> &stop) {
+    // Init statistics.
     auto stats = RunStats(num_clients);
 
     DBRequest req(-1, {});
     while (!stop.load()) {
+      // Pull request using configured scheduler.
       int queue_idx = PullRequestFromQueues(req, stop);
       if (queue_idx == -1) {
         break;
       }
-
-      auto start = std::chrono::high_resolution_clock::now();
+      auto task_start = std::chrono::high_resolution_clock::now();
+      // NOTE: currently assuming a single read.
       const auto read = req.reads[0];
-      if (task_ == 0 || task_ == 2) {
-        /* ====== READ PHASE ======= */
-        // TODO: currently assuming a single read
-        // cout << "Executing read phase on worker " << worker_id_ << endl;
+      switch (task_) {
+      case TaskType::DISK_READ:
         db_->Read(stats.dummy, read.start_idx, read.read_size);
-      }
-      if (task_ == 1 || task_ == 2) {
-        // cout << "Executing compute phase on worker " << worker_id_ << endl;
-        /* ====== COMPUTE PHASE ======= */
+        break;
+
+      case TaskType::COMPUTE: {
         if (read.compute_duration > 0) {
           auto compute_start = std::chrono::high_resolution_clock::now();
           auto timeout = std::chrono::milliseconds(read.compute_duration);
@@ -116,31 +113,33 @@ public:
           }
           stats.dummy += vol_dummy;
         }
+        break;
+      }
       }
 
-      auto end = std::chrono::high_resolution_clock::now();
+      // Update statistics on query.
+      auto task_end = std::chrono::high_resolution_clock::now();
       const int64_t total_duration =
-          std::chrono::duration_cast<std::chrono::microseconds>(end - start)
+          std::chrono::duration_cast<std::chrono::microseconds>(task_end -
+                                                                task_start)
               .count();
-      // cout << "dur: " << total_duration.count() << endl;;
 
       auto time_since_epoch_us =
           std::chrono::duration_cast<std::chrono::microseconds>(
-              start.time_since_epoch())
+              task_start.time_since_epoch())
               .count();
 
       stats.query_stats.push_back(QueryStats{.queue_idx = queue_idx,
                                              .client_id = req.client_id,
                                              .start = time_since_epoch_us,
-                                             //  .read_duration = read_duration,
                                              .total_duration = total_duration});
-      // ++stats.read_counts[queue_idx];
       ++stats.read_counts[req.client_id];
       ++stats.total_reads;
 
-      // TODO: huge update needed to this to separate queue_idx and client_id
-      // cout << "Worker " << worker_id_ << " finished task" << endl;
+      // Make any necessary updates to queue state (e.g., track resource usage).
       PushResultsToInputQueues(queue_idx, total_duration);
+
+      // Pass query to next worker or back to client.
       PassToNextQueue(req, stop);
     }
     DumpStats(stats, num_clients);
@@ -153,12 +152,10 @@ private:
 
   std::shared_ptr<AllQueueState> queue_state_;
   std::unique_ptr<TaskScheduler> scheduler_;
-  int task_;
+  TaskType task_;
 
-  // TODO: release lock earlier. Need to remove assumption that
-  //       there are always backlogged requests.
   int PullRequestFromQueues(DBRequest &request, std::atomic<bool> &stop) {
-    std::lock_guard<std::mutex> lock(*options_.input_queue_mutex);
+    std::lock_guard<std::mutex> lock(queue_state_->queue_mutex);
 
     int idx = scheduler_->GetNextQueueIdx(queue_state_, stop);
     if (idx == -1) {
@@ -173,7 +170,7 @@ private:
   }
 
   void PushResultsToInputQueues(int queue_idx, int service_duration_us) {
-    std::lock_guard<std::mutex> lock(*options_.input_queue_mutex);
+    std::lock_guard<std::mutex> lock(queue_state_->queue_mutex);
     queue_state_->client_queues[queue_idx].service_us += service_duration_us;
   }
 
@@ -185,7 +182,8 @@ private:
       queue = request.client_id == 0 ? options_.to_completion_queue0
                                      : options_.to_completion_queue1;
       mutex = options_.to_completion_mutex;
-    } else if (request.task_order[request.cur_task_idx] == 0) {
+    } else if (request.task_order[request.cur_task_idx] ==
+               TaskType::DISK_READ) {
       queue = request.client_id == 0 ? options_.to_disk_queue0
                                      : options_.to_disk_queue1;
       mutex = options_.to_disk_mutex;
@@ -208,14 +206,12 @@ private:
     vector<vector<int64_t>> per_client_durations;
     per_client_durations.resize(num_clients);
     for (const auto query : stats.query_stats) {
-      // per_client_durations[query.queue_idx].push_back(query.total_duration);
       per_client_durations[query.client_id].push_back(query.total_duration);
     }
 
     vector<vector<int64_t>> per_client_starts;
     per_client_starts.resize(num_clients);
     for (const auto query : stats.query_stats) {
-      // per_client_starts[query.queue_idx].push_back(query.start);
       per_client_starts[query.client_id].push_back(query.start);
     }
 

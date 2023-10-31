@@ -51,8 +51,8 @@ class RoundRobinScheduler : public TaskScheduler {
 };
 
 class MinimumServiceScheduler : public TaskScheduler {
-  // TODO: improve multi-threading. Currently multiple threads will choose
-  // the same least-service queue
+  // TODO: Improve multi-threading. Currently multiple threads will choose
+  // the same least-service queue.
   int GetNextQueueIdx(std::shared_ptr<AllQueueState> &queue_state,
                       std::atomic<bool> &stop) {
     // const int memory_window_size_us = 120 * 1000 * 1000;
@@ -111,6 +111,7 @@ class FIFOScheduler : public TaskScheduler {
   }
 };
 
+// Note: work in progress
 class DRFQScheduler : public TaskScheduler {
   int GetNextQueueIdx(std::shared_ptr<AllQueueState> &queue_state,
                       std::atomic<bool> &stop) {
@@ -128,8 +129,8 @@ class DRFQScheduler : public TaskScheduler {
     // ii. F(p^k-1)-delta for Disk
 
     // Client1 - CPU
-    // TODO: make sure other client's virtual start is updated when idle
-    // TODO: base case when no packets are processed
+    // TODO: Make sure other client's virtual start is updated when idle.
+    // TODO: Establish base case when no queries are processed.
     int client1_cpu_v =
         std::max(queue_state->client_queues[1].cpu_virtual_start,
                  queue_state->client_queues[1].disk_virtual_start - delta);
@@ -139,7 +140,6 @@ class DRFQScheduler : public TaskScheduler {
     int client1_cpu_b1 =
         std::max(queue_state->client_queues[0].cpu_virtual_finish,
                  queue_state->client_queues[0].disk_virtual_finish - delta);
-
     int client1_cpu_s = std::max(client1_cpu_v, client1_cpu_b1);
 
     // Client1 - Disk
@@ -196,48 +196,6 @@ class DRFQScheduler : public TaskScheduler {
           client2_cpu_s + 55555; // 1/18s
     }
     return next_client_idx;
-  }
-};
-
-class DRFScheduler : public TaskScheduler {
-  // This is based on outstanding tasks' resource usage.
-  int GetNextQueueIdx(std::shared_ptr<AllQueueState> &queue_state,
-                      std::atomic<bool> &stop) {
-    const float max_cpu = 18.0;
-    const float max_disk_bw = 9.0;
-
-    float client1_disk_ratio =
-        queue_state->client_queues[0].cur_disk_bw / max_disk_bw;
-    float client1_cpu_ratio = queue_state->client_queues[0].cur_cpu / max_cpu;
-    float client1_max_ratio = std::max(client1_cpu_ratio, client1_disk_ratio);
-
-    float client2_disk_ratio =
-        queue_state->client_queues[1].cur_disk_bw / max_disk_bw;
-    float client2_cpu_ratio = queue_state->client_queues[1].cur_cpu / max_cpu;
-    float client2_max_ratio = std::max(client2_cpu_ratio, client2_disk_ratio);
-
-    int idx = client2_max_ratio < client1_max_ratio;
-
-    // cout << "Before: " << idx << ": "
-    //      << queue_state->client_queues[0].cur_disk_bw << ", "
-    //      << queue_state->client_queues[0].cur_cpu << ", "
-    //      << queue_state->client_queues[1].cur_disk_bw << ","
-    //      << queue_state->client_queues[1].cur_cpu << endl;
-    if (idx == 0) {
-      // Task A: 1/3GB read, 2/3s CPU
-      queue_state->client_queues[0].cur_disk_bw += 1; // out of 9
-      queue_state->client_queues[0].cur_cpu += 4;     // out of 18
-    } else {
-      // Task B: 1GB read, 1/6s CPU
-      queue_state->client_queues[1].cur_disk_bw += 3; // out of 9
-      queue_state->client_queues[1].cur_cpu += 1;     // out of 18
-    }
-    // cout << "After: " << idx << ": "
-    //      << queue_state->client_queues[0].cur_disk_bw << ", "
-    //      << queue_state->client_queues[0].cur_cpu << ", "
-    //      << queue_state->client_queues[1].cur_disk_bw << ","
-    //      << queue_state->client_queues[1].cur_cpu << endl;
-    return idx;
   }
 };
 
